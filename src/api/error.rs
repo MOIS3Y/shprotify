@@ -7,12 +7,17 @@
 //! Responses use `application/json` and an `error` object containing `code`
 //! and `message`. Codes are stable identifiers for clients:
 //!
+//! - 400: `bad_request`, malformed JSON or invalid query/path parameters.
+//! - 413: `payload_too_large`, request body exceeds the extractor limit.
+//! - 415: `unsupported_media_type`, JSON content type is required.
+//! - 422: `validation_error`, invalid JSON fields or domain input.
 //! - 404: `not_found`, "Resource not found".
 //! - 405: `method_not_allowed`, "Method not allowed"; routing adds `Allow`.
 //! - 500: `internal_error`, "Internal server error".
 
 use axum::{
     Json,
+    extract::rejection::JsonRejection,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -22,6 +27,18 @@ use utoipa::ToSchema;
 /// HTTP failure with a stable client-facing code and message.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
+    /// Malformed request parameters or JSON syntax.
+    #[error("{0}")]
+    BadRequest(&'static str),
+    /// JSON input cannot be deserialized or fails domain validation.
+    #[error("{0}")]
+    Validation(&'static str),
+    /// The request body exceeds the JSON extractor's size limit.
+    #[error("Request body is too large")]
+    PayloadTooLarge,
+    /// JSON operations require an application/json content type.
+    #[error("Content-Type must be application/json")]
+    UnsupportedMediaType,
     /// No resource or route matches the request.
     #[error("Resource not found")]
     NotFound,
@@ -31,6 +48,27 @@ pub(crate) enum ApiError {
     /// Unexpected failure whose source is reserved for server logs.
     #[error("Internal server error")]
     Internal(#[from] anyhow::Error),
+}
+
+impl From<sqlx::Error> for ApiError {
+    /// Preserve database diagnostics for server logs only.
+    fn from(error: sqlx::Error) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
+impl From<JsonRejection> for ApiError {
+    /// Preserve rejection statuses with safe messages and the shared envelope.
+    fn from(error: JsonRejection) -> Self {
+        match error.status() {
+            StatusCode::PAYLOAD_TOO_LARGE => Self::PayloadTooLarge,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE => Self::UnsupportedMediaType,
+            StatusCode::UNPROCESSABLE_ENTITY => {
+                Self::Validation("Invalid JSON fields")
+            }
+            _ => Self::BadRequest("Invalid JSON body"),
+        }
+    }
 }
 
 /// Top-level envelope shared by API error responses.
@@ -44,7 +82,15 @@ pub(super) struct ErrorResponse {
 #[derive(Serialize, ToSchema)]
 struct ErrorBody {
     /// Stable lowercase identifier for client-side error handling.
-    #[schema(examples("not_found", "method_not_allowed", "internal_error"))]
+    #[schema(examples(
+        "bad_request",
+        "payload_too_large",
+        "unsupported_media_type",
+        "validation_error",
+        "not_found",
+        "method_not_allowed",
+        "internal_error"
+    ))]
     code: &'static str,
     /// Safe explanation intended for end users.
     #[schema(example = "Resource not found")]
@@ -55,6 +101,16 @@ impl IntoResponse for ApiError {
     /// Render the JSON envelope and log unexpected failures once at ERROR.
     fn into_response(self) -> Response {
         let (status, code) = match &self {
+            Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            Self::Validation(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "validation_error")
+            }
+            Self::PayloadTooLarge => {
+                (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large")
+            }
+            Self::UnsupportedMediaType => {
+                (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type")
+            }
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::MethodNotAllowed => {
                 (StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed")

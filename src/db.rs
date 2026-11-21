@@ -4,6 +4,8 @@
 //! must exist. Every connection enables foreign keys and waits up to five
 //! seconds for a SQLite write lock; WAL allows concurrent readers.
 
+pub(crate) mod artists;
+
 use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
@@ -103,6 +105,31 @@ mod tests {
 
         drop(first);
         drop(second);
+        pool.close().await;
+    }
+
+    /// Databases created before catalog migrations upgrade on startup.
+    #[tokio::test]
+    async fn upgrades_existing_database_with_no_application_tables() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("library.db");
+        let empty = Migrator::with_migrations(Vec::new());
+        let pool = connect_with_migrations(&path, &empty).await.unwrap();
+        pool.close().await;
+
+        let pool = connect(&path).await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artists")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        let version: i64 = sqlx::query_scalar(
+            "SELECT version FROM _sqlx_migrations WHERE success = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(version, 1);
         pool.close().await;
     }
 

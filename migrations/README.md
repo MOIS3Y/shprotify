@@ -10,6 +10,5 @@ applied: SQLx validates migration history and checksums on startup.
 Each migration runs in a transaction by default. The build script watches
 this directory so adding SQL files triggers recompilation.
 
-There are no application tables yet. The first schema migration belongs
-with the first library entity; startup currently creates only SQLx's
-internal migration history table.
+The first migration creates the shared `artists` catalog. Artist names
+are deliberately not unique: distinct artists can share a display name.

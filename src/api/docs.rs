@@ -22,6 +22,10 @@ use super::error::ErrorResponse;
 All API operations are served under `/api/v1`.
 
 Errors use a JSON envelope with `error.code` and `error.message`:
+- 400: `bad_request` — Malformed request or invalid parameters.
+- 413: `payload_too_large` — Request body exceeds the size limit.
+- 415: `unsupported_media_type` — JSON content type is required.
+- 422: `validation_error` — Invalid JSON fields or domain input.
 - 404: `not_found` — Resource not found.
 - 405: `method_not_allowed` — Method not allowed; includes `Allow`.
 - 500: `internal_error` — Internal server error.
@@ -29,7 +33,10 @@ Errors use a JSON envelope with `error.code` and `error.message`:
 Internal failure details are logged on the server and never returned.
 HEAD responses have no body, including error responses."
     ),
-    tags((name = "system", description = "Process health")),
+    tags(
+        (name = "system", description = "Process health"),
+        (name = "artists", description = "Shared artist catalog")
+    ),
     components(schemas(ErrorResponse), responses(ErrorResponse))
 )]
 pub(super) struct ApiDoc;
@@ -67,7 +74,8 @@ mod tests {
 
     /// Send a GET through the complete router without opening a socket.
     async fn get(path: &str, enabled: bool) -> Response {
-        crate::api::router(&DocsConfig { enabled })
+        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
+        crate::api::router(&DocsConfig { enabled }, &pool)
             .oneshot(Request::get(path).body(Body::empty()).unwrap())
             .await
             .unwrap()
@@ -164,7 +172,45 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 1);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 3);
         assert!(schema["paths"].get("/health").is_none());
+    }
+
+    /// Artist operations expose paging, request schemas, and shared errors.
+    #[tokio::test]
+    async fn schema_contains_artist_contracts() {
+        let response = get("/openapi.json", true).await;
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let schema: Value = serde_json::from_slice(&body).unwrap();
+        let paths = &schema["paths"];
+        let create = &paths["/api/v1/artists"]["post"];
+        assert_eq!(create["operationId"], "create_artist");
+        assert!(
+            create["requestBody"]["content"]["application/json"].is_object()
+        );
+        assert!(create["responses"]["201"]["headers"]["Location"].is_object());
+        for status in ["400", "413", "415", "422", "500"] {
+            assert_eq!(
+                create["responses"][status]["$ref"],
+                "#/components/responses/ErrorResponse"
+            );
+        }
+        let list = &paths["/api/v1/artists"]["get"];
+        assert_eq!(list["operationId"], "list_artists");
+        let parameters = list["parameters"].as_array().unwrap();
+        let limit = parameters
+            .iter()
+            .find(|parameter| parameter["name"] == "limit")
+            .unwrap();
+        assert_eq!(limit["schema"]["default"], 50);
+        assert_eq!(limit["schema"]["maximum"], 100);
+        assert_eq!(
+            paths["/api/v1/artists/{id}"]["get"]["responses"]["404"]["$ref"],
+            "#/components/responses/ErrorResponse"
+        );
+        let artist = &schema["components"]["schemas"]["Artist"];
+        assert_eq!(artist["properties"]["id"]["type"], "integer");
+        assert_eq!(artist["properties"]["name"]["type"], "string");
+        assert!(paths.get("/artists").is_none());
     }
 }

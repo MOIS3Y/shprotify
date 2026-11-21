@@ -1,5 +1,6 @@
 //! Versioned HTTP routing and process health endpoint.
 
+mod artists;
 mod docs;
 pub(crate) mod error;
 
@@ -18,8 +19,10 @@ use self::error::ApiError;
 /// every registered path receive the same JSON error envelope.
 /// Version-local paths are nested once under `/api/v1` for both HTTP routing
 /// and OpenAPI. Documentation routes are attached at the application root.
-pub(crate) fn router(config: &DocsConfig) -> Router {
-    let v1 = OpenApiRouter::new().routes(routes!(health));
+pub(crate) fn router(config: &DocsConfig, pool: &sqlx::SqlitePool) -> Router {
+    let v1 = OpenApiRouter::new()
+        .routes(routes!(health))
+        .merge(artists::router(pool.clone()));
     let (router, schema) =
         OpenApiRouter::with_openapi(docs::ApiDoc::openapi())
             .nest("/api/v1", v1)
@@ -77,7 +80,12 @@ mod tests {
 
     /// Build the default router with all documentation routes disabled.
     fn router() -> Router {
-        super::router(&DocsConfig::default())
+        super::router(&DocsConfig::default(), &test_pool())
+    }
+
+    /// Supply unused state for routes that do not access the database.
+    fn test_pool() -> sqlx::SqlitePool {
+        sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap()
     }
 
     /// Health returns HTTP 200 with the documented JSON response.
@@ -217,7 +225,7 @@ mod tests {
     #[tokio::test]
     async fn unversioned_and_unknown_api_paths_return_json_not_found() {
         for enabled in [false, true] {
-            let app = super::router(&DocsConfig { enabled });
+            let app = super::router(&DocsConfig { enabled }, &test_pool());
             for path in [
                 "/health",
                 "/api/v1",

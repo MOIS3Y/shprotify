@@ -30,7 +30,8 @@ pub(crate) async fn run() -> Result<()> {
     let shutdown = shutdown_signal()?;
     let database = db::connect(Path::new(&config.database.path)).await?;
     tracing::info!("SQLite database initialized; migrations applied");
-    let result = serve_http(config.http.bind, &config.docs, shutdown).await;
+    let result =
+        serve_http(config.http.bind, &config.docs, &database, shutdown).await;
     database.close().await;
     result
 }
@@ -39,6 +40,7 @@ pub(crate) async fn run() -> Result<()> {
 async fn serve_http(
     address: SocketAddr,
     docs: &DocsConfig,
+    database: &sqlx::SqlitePool,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
     let listener = TcpListener::bind(address).await.with_context(|| {
@@ -49,7 +51,7 @@ async fn serve_http(
         .context("Failed to read HTTP listener address")?;
     tracing::info!(address = %bound_address, "HTTP server listening");
 
-    axum::serve(listener, api::router(docs))
+    axum::serve(listener, api::router(docs, database))
         .with_graceful_shutdown(shutdown)
         .await
         .context("HTTP server failed")?;
