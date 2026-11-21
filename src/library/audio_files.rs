@@ -1,7 +1,8 @@
 //! Audio file metadata linked to recordings, without filesystem side effects.
 //!
-//! Registration stores declared properties. File existence, media probing,
-//! symlink resolution, and streaming belong to later scanning/audio stages.
+//! Registration stores declared properties without checking file existence.
+//! Read-only media probing lives in `metadata`; registration does not invoke
+//! it or resolve symlinks. Streaming belongs to the later audio stage.
 
 use std::path::{Component, Path, PathBuf};
 

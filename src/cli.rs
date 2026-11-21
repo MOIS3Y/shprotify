@@ -2,15 +2,25 @@
 
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 /// Startup options; configuration values come from TOML and environment.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub(crate) struct Cli {
     /// Load this TOML file before applying SHPROTIFY_* overrides.
-    #[arg(short, long, value_name = "PATH")]
+    #[arg(short, long, global = true, value_name = "PATH")]
     pub(crate) config: Option<PathBuf>,
+    /// Optional operation; omitting it starts the HTTP server.
+    #[command(subcommand)]
+    pub(crate) command: Option<Command>,
+}
+
+/// Explicit operations that share the server configuration.
+#[derive(Debug, Subcommand)]
+pub(crate) enum Command {
+    /// Read tags/properties as JSON Lines without changing the catalog.
+    Scan,
 }
 
 #[cfg(test)]
@@ -45,6 +55,19 @@ mod tests {
         let error =
             Cli::try_parse_from(["shprotify", "--config"]).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::InvalidValue);
+    }
+
+    /// Scan accepts the shared configuration option in either position.
+    #[test]
+    fn accepts_scan_with_global_config() {
+        for args in [
+            ["shprotify", "scan", "--config", "music.toml"],
+            ["shprotify", "--config", "music.toml", "scan"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.command, Some(Command::Scan)));
+            assert_eq!(cli.config, Some(PathBuf::from("music.toml")));
+        }
     }
 
     /// Help and version request successful early exits from Clap.

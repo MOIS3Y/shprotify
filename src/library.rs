@@ -1,10 +1,12 @@
-//! Shared music catalog entities and their validation rules.
+//! Shared catalog entities, validation, and read-only collection scanning.
 
 pub(crate) mod audio_files;
 pub(crate) mod directories;
+pub(crate) mod metadata;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
+pub(crate) mod scan;
 
 use std::collections::HashSet;
 

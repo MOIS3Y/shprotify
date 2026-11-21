@@ -17,8 +17,12 @@ path = "dev/shprotify.db"
 
 [library]
 # Existing readable directories, relative to the working directory or absolute.
-# Files are never moved, renamed, or modified; scanning is not implemented yet.
+# Files are never moved, renamed, or modified.
 # Startup resolves symlinks and rejects duplicate or overlapping roots.
+# Read tags/properties: cargo run -- --config dev/shprotify.toml scan
+# Scan writes JSON Lines to stdout; logs go to stderr. It does not open the DB.
+# Nested symlinks are skipped. File errors are reported; exit status is nonzero.
+# Scanning is explicit; normal server startup only validates these roots.
 directories = []
 # Example: directories = ["dev/music", "/mnt/music archive"]
 # Environment: SHPROTIFY_LIBRARY__DIRECTORIES='["/srv/music", "/mnt/archive"]'

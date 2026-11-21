@@ -1,4 +1,4 @@
-//! Read-only preparation of external collection directories for future scans.
+//! Read-only preparation of external collection directories for scanning.
 //!
 //! Paths are resolved against the process working directory. Symlink roots
 //! are allowed, but aliases and nested roots are rejected after canonical

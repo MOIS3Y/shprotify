@@ -1,8 +1,13 @@
 //! Application startup orchestration.
 
-use std::{future::Future, net::SocketAddr, path::Path};
+use std::{
+    future::Future,
+    io::{self, Write},
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use clap::Parser;
 use tokio::{
     net::TcpListener,
@@ -11,14 +16,14 @@ use tokio::{
 
 use crate::{
     api,
-    cli::Cli,
+    cli::{Cli, Command},
     config::{Config, DocsConfig},
     db,
-    library::directories,
+    library::{directories, scan},
     logging,
 };
 
-/// Load settings, initialize logs, and serve HTTP until a shutdown signal.
+/// Load settings and either scan the collection or serve HTTP.
 ///
 /// Signal registration and binding errors stop startup. The server drains
 /// active requests before returning after SIGINT or SIGTERM. Migrations run
@@ -30,7 +35,6 @@ pub(crate) async fn run() -> Result<()> {
     let config = Config::load(cli.config.as_deref())?;
     logging::init(&config.logging)?;
 
-    let shutdown = shutdown_signal()?;
     let paths = config.library.directories;
     let roots =
         tokio::task::spawn_blocking(move || directories::prepare(&paths))
@@ -40,12 +44,41 @@ pub(crate) async fn run() -> Result<()> {
         directory_count = roots.len(),
         "External library directories validated"
     );
+    if matches!(cli.command, Some(Command::Scan)) {
+        return scan_library(roots).await;
+    }
+    let shutdown = shutdown_signal()?;
     let database = db::connect(Path::new(&config.database.path)).await?;
     tracing::info!("SQLite database initialized; migrations applied");
     let result =
         serve_http(config.http.bind, &config.docs, &database, shutdown).await;
     database.close().await;
     result
+}
+
+/// Stream scan results to stdout without opening SQLite or an HTTP listener.
+///
+/// File failures still produce a final summary, followed by a failing exit
+/// status. Logging stays on stderr; a broken report sink stops traversal.
+async fn scan_library(roots: Vec<PathBuf>) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut output = io::BufWriter::new(io::stdout().lock());
+        let summary = scan::run(&roots, |event| {
+            serde_json::to_writer(&mut output, &event)
+                .context("Failed to serialize scan report")?;
+            writeln!(output).context("Failed to write scan report")?;
+            Ok(())
+        })?;
+        output.flush().context("Failed to flush scan report")?;
+        ensure!(
+            summary.errors == 0,
+            "Scan finished with {} error(s); see the JSON Lines report",
+            summary.errors
+        );
+        Ok(())
+    })
+    .await
+    .context("Library scanner worker failed")?
 }
 
 /// Bind the listener and serve requests until graceful shutdown completes.
