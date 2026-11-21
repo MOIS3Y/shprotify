@@ -1,5 +1,7 @@
 //! Shared music catalog entities and their validation rules.
 
+pub(crate) mod releases;
+
 use serde::Serialize;
 use utoipa::ToSchema;
 

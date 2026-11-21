@@ -35,7 +35,8 @@ HEAD responses have no body, including error responses."
     ),
     tags(
         (name = "system", description = "Process health"),
-        (name = "artists", description = "Shared artist catalog")
+        (name = "artists", description = "Shared artist catalog"),
+        (name = "releases", description = "Releases and artist credits")
     ),
     components(schemas(ErrorResponse), responses(ErrorResponse))
 )]
@@ -172,7 +173,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 3);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 5);
         assert!(schema["paths"].get("/health").is_none());
     }
 
@@ -212,5 +213,45 @@ mod tests {
         assert_eq!(artist["properties"]["id"]["type"], "integer");
         assert_eq!(artist["properties"]["name"]["type"], "string");
         assert!(paths.get("/artists").is_none());
+    }
+
+    /// Release operations describe ordered credits, kinds, and error statuses.
+    #[tokio::test]
+    async fn schema_contains_release_contracts() {
+        let response = get("/openapi.json", true).await;
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let schema: Value = serde_json::from_slice(&body).unwrap();
+        let paths = &schema["paths"];
+        let create = &paths["/api/v1/releases"]["post"];
+        assert_eq!(create["operationId"], "create_release");
+        assert!(create["responses"]["201"]["headers"]["Location"].is_object());
+        for status in ["400", "413", "415", "422", "500"] {
+            assert_eq!(
+                create["responses"][status]["$ref"],
+                "#/components/responses/ErrorResponse"
+            );
+        }
+        let list = &paths["/api/v1/releases"]["get"];
+        assert_eq!(list["operationId"], "list_releases");
+        assert_eq!(list["parameters"].as_array().unwrap().len(), 2);
+        let detail = &paths["/api/v1/releases/{id}"]["get"];
+        assert_eq!(detail["operationId"], "get_release");
+        assert!(detail["responses"]["404"].is_object());
+        let schemas = &schema["components"]["schemas"];
+        assert_eq!(
+            schemas["Release"]["properties"]["artist_ids"]["type"],
+            "array"
+        );
+        assert_eq!(
+            schemas["ReleaseKind"]["enum"],
+            serde_json::json!([
+                "album",
+                "single",
+                "ep",
+                "compilation",
+                "other"
+            ])
+        );
+        assert!(paths.get("/releases").is_none());
     }
 }

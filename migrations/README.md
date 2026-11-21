@@ -12,3 +12,7 @@ this directory so adding SQL files triggers recompilation.
 
 The first migration creates the shared `artists` catalog. Artist names
 are deliberately not unique: distinct artists can share a display name.
+
+The second adds `releases` and ordered `release_artists` credits. Titles
+are not unique. Credits reference existing artists; deleting a credited
+artist is restricted, while deleting a release removes its credits.

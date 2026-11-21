@@ -3,6 +3,8 @@
 mod artists;
 mod docs;
 pub(crate) mod error;
+mod pagination;
+mod releases;
 
 use axum::{Json, Router};
 use serde::Serialize;
@@ -22,7 +24,8 @@ use self::error::ApiError;
 pub(crate) fn router(config: &DocsConfig, pool: &sqlx::SqlitePool) -> Router {
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
-        .merge(artists::router(pool.clone()));
+        .merge(artists::router(pool.clone()))
+        .merge(releases::router(pool.clone()));
     let (router, schema) =
         OpenApiRouter::with_openapi(docs::ApiDoc::openapi())
             .nest("/api/v1", v1)

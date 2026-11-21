@@ -5,6 +5,7 @@
 //! seconds for a SQLite write lock; WAL allows concurrent readers.
 
 pub(crate) mod artists;
+pub(crate) mod releases;
 
 use std::{path::Path, time::Duration};
 
@@ -123,13 +124,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0);
-        let version: i64 = sqlx::query_scalar(
-            "SELECT version FROM _sqlx_migrations WHERE success = 1",
+        let versions: Vec<i64> = sqlx::query_scalar(
+            "SELECT version FROM _sqlx_migrations \
+             WHERE success = 1 ORDER BY version",
         )
-        .fetch_one(&pool)
+        .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(versions, [1, 2]);
+        pool.close().await;
+    }
+
+    /// Upgrading the artist-only schema preserves its existing catalog data.
+    #[tokio::test]
+    async fn upgrades_artist_catalog_to_release_schema() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("library.db");
+        let first = migrator(
+            directory.path(),
+            include_str!("../migrations/1_create_artists.sql"),
+        )
+        .await;
+        let pool = connect_with_migrations(&path, &first).await.unwrap();
+        sqlx::query("INSERT INTO artists (name) VALUES ('Existing')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let pool = connect(&path).await.unwrap();
+        let name: String = sqlx::query_scalar("SELECT name FROM artists")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "Existing");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM releases")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
         pool.close().await;
     }
 

@@ -11,7 +11,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use utoipa::{IntoParams, ToSchema};
+use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
@@ -19,7 +19,10 @@ use crate::{
     library::{Artist, ArtistName},
 };
 
-use super::error::{ApiError, ErrorResponse};
+use super::{
+    error::{ApiError, ErrorResponse},
+    pagination::Pagination,
+};
 
 /// Register version-local artist routes with their database state.
 pub(super) fn router(pool: SqlitePool) -> OpenApiRouter {
@@ -36,29 +39,6 @@ struct CreateArtist {
     /// Display name, trimmed before validation; 1–255 Unicode characters.
     #[schema(min_length = 1, max_length = 255, example = "Massive Attack")]
     name: String,
-}
-
-/// Page selection; results are ordered by ascending artist identifier.
-#[derive(Deserialize, IntoParams)]
-#[serde(default, deny_unknown_fields)]
-#[into_params(parameter_in = Query)]
-struct ArtistQuery {
-    /// Maximum items to return; between 1 and 100, default 50.
-    #[param(minimum = 1, maximum = 100, default = 50)]
-    limit: i64,
-    /// Number of artists to skip; nonnegative, default zero.
-    #[param(minimum = 0, default = 0)]
-    offset: i64,
-}
-
-impl Default for ArtistQuery {
-    /// Use a bounded first page when no query parameters are provided.
-    fn default() -> Self {
-        Self {
-            limit: 50,
-            offset: 0,
-        }
-    }
 }
 
 /// A bounded slice of the catalog with the effective paging parameters.
@@ -138,7 +118,7 @@ async fn get_artist(
 /// List artists using a bounded page in ascending identifier order.
 #[utoipa::path(
     get, path = "/artists", tag = "artists", operation_id = "list_artists",
-    params(ArtistQuery),
+    params(Pagination),
     responses(
         (status = 200, body = ArtistPage, description = "Artist page"),
         (status = 400, response = ErrorResponse),
@@ -147,15 +127,11 @@ async fn get_artist(
 )]
 async fn list_artists(
     State(pool): State<SqlitePool>,
-    query: Result<Query<ArtistQuery>, QueryRejection>,
+    query: Result<Query<Pagination>, QueryRejection>,
 ) -> Result<Json<ArtistPage>, ApiError> {
     let Query(query) = query
         .map_err(|_| ApiError::BadRequest("Invalid pagination parameters"))?;
-    if !(1..=100).contains(&query.limit) || query.offset < 0 {
-        return Err(ApiError::BadRequest(
-            "limit must be 1–100 and offset must be nonnegative",
-        ));
-    }
+    query.validate()?;
     let items = db::artists::list(&pool, query.limit, query.offset).await?;
     Ok(Json(ArtistPage {
         items,
