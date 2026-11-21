@@ -1,9 +1,36 @@
 //! Shared music catalog entities and their validation rules.
 
+pub(crate) mod recordings;
 pub(crate) mod releases;
+
+use std::collections::HashSet;
 
 use serde::Serialize;
 use utoipa::ToSchema;
+
+/// Trim and validate a catalog title, counting Unicode scalar values.
+fn validate_title(title: &str) -> Result<&str, &'static str> {
+    let title = title.trim();
+    if title.is_empty()
+        || title.chars().count() > 255
+        || title.chars().any(char::is_control)
+    {
+        return Err("Title must be 1–255 characters without controls");
+    }
+    Ok(title)
+}
+
+/// Validate up to 100 distinct positive artist IDs without changing order.
+fn validate_artist_ids(artist_ids: &[i64]) -> Result<(), &'static str> {
+    let distinct: HashSet<_> = artist_ids.iter().collect();
+    if artist_ids.len() > 100
+        || artist_ids.iter().any(|id| *id <= 0)
+        || distinct.len() != artist_ids.len()
+    {
+        return Err("artist_ids must contain up to 100 distinct positive IDs");
+    }
+    Ok(())
+}
 
 /// An artist or group in the shared catalog; names need not be unique.
 #[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]

@@ -5,6 +5,7 @@
 //! seconds for a SQLite write lock; WAL allows concurrent readers.
 
 pub(crate) mod artists;
+pub(crate) mod recordings;
 pub(crate) mod releases;
 
 use std::{path::Path, time::Duration};
@@ -131,7 +132,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2]);
+        assert_eq!(versions, [1, 2, 3]);
         pool.close().await;
     }
 
@@ -163,6 +164,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0);
+        pool.close().await;
+    }
+
+    /// The recording migration preserves existing releases and their credits.
+    #[tokio::test]
+    async fn upgrades_release_catalog_to_recording_schema() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("library.db");
+        fs::write(
+            directory.path().join("1_create_artists.sql"),
+            include_str!("../migrations/1_create_artists.sql"),
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("2_create_releases.sql"),
+            include_str!("../migrations/2_create_releases.sql"),
+        )
+        .unwrap();
+        let previous = Migrator::new(directory.path()).await.unwrap();
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        let artist = artists::create(
+            &pool,
+            &crate::library::ArtistName::parse("Existing").unwrap(),
+        )
+        .await
+        .unwrap();
+        let release = releases::create(
+            &pool,
+            crate::library::releases::NewRelease::new(
+                "Existing release",
+                crate::library::releases::ReleaseKind::Album,
+                vec![artist.id],
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = connect(&path).await.unwrap();
+        let fetched =
+            releases::find(&pool, release.id).await.unwrap().unwrap();
+        assert_eq!(fetched.title, release.title);
+        assert_eq!(fetched.artist_ids, [artist.id]);
+        assert!(recordings::list(&pool, 50, 0).await.unwrap().is_empty());
         pool.close().await;
     }
 

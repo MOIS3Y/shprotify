@@ -1,7 +1,5 @@
 //! Release entities and validation independent of HTTP and persistence.
 
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -54,22 +52,8 @@ impl NewRelease {
         kind: ReleaseKind,
         artist_ids: Vec<i64>,
     ) -> Result<Self, &'static str> {
-        let title = title.trim();
-        if title.is_empty()
-            || title.chars().count() > 255
-            || title.chars().any(char::is_control)
-        {
-            return Err("Title must be 1–255 characters without controls");
-        }
-        let distinct: HashSet<_> = artist_ids.iter().collect();
-        if artist_ids.len() > 100
-            || artist_ids.iter().any(|id| *id <= 0)
-            || distinct.len() != artist_ids.len()
-        {
-            return Err(
-                "artist_ids must contain up to 100 distinct positive IDs",
-            );
-        }
+        let title = super::validate_title(title)?;
+        super::validate_artist_ids(&artist_ids)?;
         Ok(Self {
             title: title.into(),
             kind,
