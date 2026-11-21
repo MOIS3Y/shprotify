@@ -23,6 +23,16 @@ pub(crate) struct Config {
     pub(crate) database: DatabaseConfig,
     /// Log filtering and output settings.
     pub(crate) logging: LoggingConfig,
+    /// Optional interactive API documentation and OpenAPI schema.
+    pub(crate) docs: DocsConfig,
+}
+
+/// Documentation routes enabled at startup; disabled by default.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DocsConfig {
+    /// Publish Swagger UI and its OpenAPI JSON together after a restart.
+    pub(crate) enabled: bool,
 }
 
 /// Address on which the HTTP server will listen.
@@ -163,6 +173,7 @@ mod tests {
         assert_eq!(config.database.path, "shprotify.db");
         assert!(matches!(config.logging.level, LogLevel::Info));
         assert!(matches!(config.logging.format, LogFormat::Pretty));
+        assert!(!config.docs.enabled);
     }
 
     /// Partial TOML preserves defaults for unspecified fields.
@@ -193,6 +204,8 @@ mod tests {
             "[database]\npath = '  '",
             "[logging]\nlevel = 'verbose'",
             "[logging]\nformat = 'xml'",
+            "[docs]\nenabled = 'yes'",
+            "[docs]\nunknown = true",
             "[http]\nport = 3000",
             "[unknown]\nenabled = true",
             "[http",
@@ -232,6 +245,7 @@ mod tests {
             assert_eq!(config.database.path, "music files/test.db");
             assert!(matches!(config.logging.level, LogLevel::Debug));
             assert!(matches!(config.logging.format, LogFormat::Json));
+            assert!(config.docs.enabled);
             return;
         }
 
@@ -250,8 +264,16 @@ mod tests {
             .env("SHPROTIFY_DATABASE__PATH", "music files/test.db")
             .env("SHPROTIFY_LOGGING__LEVEL", "debug")
             .env("SHPROTIFY_LOGGING__FORMAT", "json")
+            .env("SHPROTIFY_DOCS__ENABLED", "true")
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
+    }
+
+    /// Documentation can be enabled explicitly in TOML.
+    #[test]
+    fn documentation_can_be_enabled() {
+        let config = from_toml("[docs]\nenabled = true").unwrap();
+        assert!(config.docs.enabled);
     }
 }

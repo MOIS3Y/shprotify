@@ -1,9 +1,14 @@
 //! HTTP routing and process health endpoint.
 
+mod docs;
 pub(crate) mod error;
 
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router};
 use serde::Serialize;
+use utoipa::{OpenApi, ToSchema};
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+use crate::config::DocsConfig;
 
 use self::error::ApiError;
 
@@ -11,9 +16,13 @@ use self::error::ApiError;
 ///
 /// Register all routes before the method fallback so unsupported methods on
 /// every registered path receive the same JSON error envelope.
-pub(crate) fn router() -> Router {
-    Router::new()
-        .route("/health", get(health))
+pub(crate) fn router(config: &DocsConfig) -> Router {
+    let (router, schema) =
+        OpenApiRouter::with_openapi(docs::ApiDoc::openapi())
+            .routes(routes!(health))
+            .split_for_parts();
+
+    docs::attach(router, schema, config)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
 }
@@ -29,13 +38,23 @@ async fn method_not_allowed() -> ApiError {
 }
 
 /// Process liveness response; storage readiness is not checked here.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct Health {
     /// Fixed status indicating the HTTP handler is available.
+    #[schema(example = "ok")]
     status: &'static str,
 }
 
 /// Report that the process can handle HTTP requests.
+///
+/// This liveness check does not query the database or external services.
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "system",
+    operation_id = "get_health",
+    responses((status = 200, description = "Process is alive", body = Health))
+)]
 async fn health() -> Json<Health> {
     Json(Health { status: "ok" })
 }
@@ -47,10 +66,16 @@ mod tests {
     use axum::{
         body::{Body, to_bytes},
         http::{Request, StatusCode, header},
+        routing::get,
     };
     use tower::ServiceExt;
 
     use super::*;
+
+    /// Build the default router with all documentation routes disabled.
+    fn router() -> Router {
+        super::router(&DocsConfig::default())
+    }
 
     /// Health returns HTTP 200 with the documented JSON response.
     #[tokio::test]

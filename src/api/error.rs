@@ -17,6 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use utoipa::ToSchema;
 
 /// HTTP failure with a stable client-facing code and message.
 #[derive(Debug, thiserror::Error)]
@@ -33,18 +34,20 @@ pub(crate) enum ApiError {
 }
 
 /// Top-level envelope shared by API error responses.
-#[derive(Serialize)]
-struct ErrorResponse {
+#[derive(Serialize, ToSchema, utoipa::ToResponse)]
+pub(super) struct ErrorResponse {
     /// Public error details, without internal failure causes.
     error: ErrorBody,
 }
 
 /// Stable machine-readable code and human-readable explanation.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct ErrorBody {
     /// Stable lowercase identifier for client-side error handling.
+    #[schema(examples("not_found", "method_not_allowed", "internal_error"))]
     code: &'static str,
     /// Safe explanation intended for end users.
+    #[schema(example = "Resource not found")]
     message: String,
 }
 

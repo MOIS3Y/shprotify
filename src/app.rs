@@ -9,7 +9,12 @@ use tokio::{
     signal::unix::{SignalKind, signal},
 };
 
-use crate::{api, cli::Cli, config::Config, db, logging};
+use crate::{
+    api,
+    cli::Cli,
+    config::{Config, DocsConfig},
+    db, logging,
+};
 
 /// Load settings, initialize logs, and serve HTTP until a shutdown signal.
 ///
@@ -25,7 +30,7 @@ pub(crate) async fn run() -> Result<()> {
     let shutdown = shutdown_signal()?;
     let database = db::connect(Path::new(&config.database.path)).await?;
     tracing::info!("SQLite database initialized; migrations applied");
-    let result = serve_http(config.http.bind, shutdown).await;
+    let result = serve_http(config.http.bind, &config.docs, shutdown).await;
     database.close().await;
     result
 }
@@ -33,6 +38,7 @@ pub(crate) async fn run() -> Result<()> {
 /// Bind the listener and serve requests until graceful shutdown completes.
 async fn serve_http(
     address: SocketAddr,
+    docs: &DocsConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
     let listener = TcpListener::bind(address).await.with_context(|| {
@@ -43,7 +49,7 @@ async fn serve_http(
         .context("Failed to read HTTP listener address")?;
     tracing::info!(address = %bound_address, "HTTP server listening");
 
-    axum::serve(listener, api::router())
+    axum::serve(listener, api::router(docs))
         .with_graceful_shutdown(shutdown)
         .await
         .context("HTTP server failed")?;

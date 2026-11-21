@@ -20,3 +20,8 @@ path = "dev/shprotify.db"
 level = "info"
 # stderr output: pretty (terminal colors when available), json.
 format = "pretty"
+
+[docs]
+# Publish /docs and /openapi.json. Both are absent when disabled.
+# Change requires a restart; override with SHPROTIFY_DOCS__ENABLED=true.
+enabled = false
