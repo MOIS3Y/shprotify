@@ -2,7 +2,8 @@
 //!
 //! Registration stores declared properties without checking file existence.
 //! Read-only media probing lives in `metadata`; registration does not invoke
-//! it or resolve symlinks. Streaming belongs to the later audio stage.
+//! it or resolve symlinks. Background indexing can refresh stored properties.
+//! Streaming belongs to the later audio stage.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -65,9 +66,9 @@ pub(crate) struct AudioFile {
     pub(crate) recording_id: i64,
     /// Absolute UTF-8 path, normalized lexically without resolving symlinks.
     pub(crate) path: String,
-    /// Lowercase declared format label, such as flac, mp3, ogg, or m4a.
+    /// Stored lowercase format label, declared or detected by the scanner.
     pub(crate) format: String,
-    /// Declared properties; values are not verified against file contents yet.
+    /// Declared properties, replaced with measurements by background indexing.
     #[sqlx(flatten)]
     pub(crate) properties: AudioProperties,
 }

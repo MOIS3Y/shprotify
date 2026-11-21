@@ -1,4 +1,4 @@
-//! Metadata-only file registration and nested recording file endpoints.
+//! Recording file registration, stored metadata, and observed source tags.
 
 use axum::{
     Json,
@@ -28,6 +28,7 @@ pub(super) fn router(pool: SqlitePool) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(register_file, list_files))
         .routes(routes!(get_file))
+        .routes(routes!(get_file_tags))
         .with_state(pool)
 }
 
@@ -141,7 +142,37 @@ async fn get_file(
     ))
 }
 
-/// List declared file metadata for a recording in ascending identifier order.
+/// Read observed source tags without interpreting them as catalog identities.
+///
+/// Returns 404 for unknown files, a wrong parent, or files never probed by a
+/// background scan. The read-only CLI does not persist these observations.
+#[utoipa::path(
+    get, path = "/recordings/{id}/files/{file_id}/tags", tag = "audio_files",
+    operation_id = "get_audio_file_tags",
+    params(("id" = i64, Path, minimum = 1, description = "Recording ID"),
+        ("file_id" = i64, Path, minimum = 1, description = "Audio file ID")),
+    responses(
+        (status = 200, body = crate::library::metadata::AudioTags,
+            description = "Latest observed source tags"),
+        (status = 400, response = ErrorResponse),
+        (status = 404, response = ErrorResponse),
+        (status = 500, response = ErrorResponse)
+    )
+)]
+async fn get_file_tags(
+    State(pool): State<SqlitePool>,
+    ids: Result<Path<(i64, i64)>, PathRejection>,
+) -> Result<Json<crate::library::metadata::AudioTags>, ApiError> {
+    let Path((recording_id, file_id)) =
+        ids.map_err(|_| ApiError::BadRequest("Invalid recording or file id"))?;
+    Ok(Json(
+        crate::db::indexing::tags(&pool, recording_id, file_id)
+            .await?
+            .ok_or(ApiError::NotFound)?,
+    ))
+}
+
+/// List stored file metadata for a recording in ascending identifier order.
 #[utoipa::path(
     get, path = "/recordings/{id}/files", tag = "audio_files",
     operation_id = "list_audio_files",
@@ -202,7 +233,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let app = crate::api::router(&DocsConfig::default(), &pool);
+        let app = crate::api::router(
+            &DocsConfig::default(),
+            &pool,
+            crate::jobs::ScanService::new(pool.clone(), vec![]),
+        );
         (directory, pool, app, recording.id)
     }
 

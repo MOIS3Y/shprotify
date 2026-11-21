@@ -23,6 +23,9 @@ path = "dev/shprotify.db"
 # Scan writes JSON Lines to stdout; logs go to stderr. It does not open the DB.
 # Nested symlinks are skipped. File errors are reported; exit status is nonzero.
 # Scanning is explicit; normal server startup only validates these roots.
+# POST /api/v1/library/scans starts background indexing into the catalog.
+# Existing paths keep their recording; measured properties/tags are refreshed.
+# See examples/scan.md for the import policy and persisted job reports.
 directories = []
 # Example: directories = ["dev/music", "/mnt/music archive"]
 # Environment: SHPROTIFY_LIBRARY__DIRECTORIES='["/srv/music", "/mnt/archive"]'

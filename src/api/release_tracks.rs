@@ -226,7 +226,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let app = crate::api::router(&DocsConfig::default(), &pool);
+        let app = crate::api::router(
+            &DocsConfig::default(),
+            &pool,
+            crate::jobs::ScanService::new(pool.clone(), vec![]),
+        );
         (directory, pool, app, release.id, recording.id)
     }
 

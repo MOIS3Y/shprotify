@@ -5,6 +5,7 @@ mod app;
 mod cli;
 mod config;
 mod db;
+mod jobs;
 mod library;
 mod logging;
 

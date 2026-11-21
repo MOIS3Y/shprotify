@@ -163,7 +163,11 @@ mod tests {
         let pool = db::connect(&directory.path().join("library.db"))
             .await
             .unwrap();
-        let app = crate::api::router(&DocsConfig::default(), &pool);
+        let app = crate::api::router(
+            &DocsConfig::default(),
+            &pool,
+            crate::jobs::ScanService::new(pool.clone(), vec![]),
+        );
         (directory, pool, app)
     }
 

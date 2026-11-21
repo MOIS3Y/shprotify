@@ -19,6 +19,7 @@ use crate::{
     cli::{Cli, Command},
     config::{Config, DocsConfig},
     db,
+    jobs::ScanService,
     library::{directories, scan},
     logging,
 };
@@ -30,6 +31,8 @@ use crate::{
 /// before serving HTTP, and the pool is closed when HTTP serving finishes
 /// or fails, including listener binding errors. External directory checks
 /// complete before opening the database and run outside async worker threads.
+/// Unfinished persisted scan jobs are marked interrupted before HTTP startup.
+/// Accepted background scans finish before the database pool closes.
 pub(crate) async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = Config::load(cli.config.as_deref())?;
@@ -50,8 +53,20 @@ pub(crate) async fn run() -> Result<()> {
     let shutdown = shutdown_signal()?;
     let database = db::connect(Path::new(&config.database.path)).await?;
     tracing::info!("SQLite database initialized; migrations applied");
-    let result =
-        serve_http(config.http.bind, &config.docs, &database, shutdown).await;
+    if let Err(error) = db::scans::recover(&database).await {
+        database.close().await;
+        return Err(error).context("Failed to recover library scan jobs");
+    }
+    let scans = ScanService::new(database.clone(), roots);
+    let result = serve_http(
+        config.http.bind,
+        &config.docs,
+        &database,
+        &scans,
+        shutdown,
+    )
+    .await;
+    scans.close().await;
     database.close().await;
     result
 }
@@ -86,6 +101,7 @@ async fn serve_http(
     address: SocketAddr,
     docs: &DocsConfig,
     database: &sqlx::SqlitePool,
+    scans: &ScanService,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
     let listener = TcpListener::bind(address).await.with_context(|| {
@@ -96,7 +112,7 @@ async fn serve_http(
         .context("Failed to read HTTP listener address")?;
     tracing::info!(address = %bound_address, "HTTP server listening");
 
-    axum::serve(listener, api::router(docs, database))
+    axum::serve(listener, api::router(docs, database, scans.clone()))
         .with_graceful_shutdown(shutdown)
         .await
         .context("HTTP server failed")?;

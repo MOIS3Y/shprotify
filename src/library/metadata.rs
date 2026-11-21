@@ -14,7 +14,8 @@ use lofty::{
     probe::Probe,
     tag::ItemKey,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::audio_files::AudioProperties;
 
@@ -32,7 +33,7 @@ pub(crate) struct ScannedFile {
 }
 
 /// Common source tags; missing tags are represented explicitly as null.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
 pub(crate) struct AudioTags {
     /// Recording title, if embedded.
     pub(crate) title: Option<String>,
@@ -135,7 +136,7 @@ fn format_label(format: FileType) -> Result<&'static str> {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     //! Independently constructed PCM/RIFF fixtures and malformed input.
 
     use super::*;

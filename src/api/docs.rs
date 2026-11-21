@@ -40,7 +40,8 @@ HEAD responses have no body, including error responses."
         (name = "releases", description = "Releases and artist credits"),
         (name = "recordings", description = "Independent musical recordings"),
         (name = "release_tracks", description = "Tracks within releases"),
-        (name = "audio_files", description = "Declared file metadata")
+        (name = "audio_files", description = "File metadata and source tags"),
+        (name = "library_scans", description = "Background library indexing")
     ),
     components(schemas(ErrorResponse), responses(ErrorResponse))
 )]
@@ -80,10 +81,14 @@ mod tests {
     /// Send a GET through the complete router without opening a socket.
     async fn get(path: &str, enabled: bool) -> Response {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
-        crate::api::router(&DocsConfig { enabled }, &pool)
-            .oneshot(Request::get(path).body(Body::empty()).unwrap())
-            .await
-            .unwrap()
+        crate::api::router(
+            &DocsConfig { enabled },
+            &pool,
+            crate::jobs::ScanService::new(pool.clone(), vec![]),
+        )
+        .oneshot(Request::get(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap()
     }
 
     /// Disabling documentation hides its schema, UI, and bundled assets.
@@ -177,7 +182,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 11);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 15);
         assert!(schema["paths"].get("/health").is_none());
     }
 

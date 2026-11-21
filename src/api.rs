@@ -8,13 +8,14 @@ mod pagination;
 mod recordings;
 mod release_tracks;
 mod releases;
+mod scans;
 
 use axum::{Json, Router};
 use serde::Serialize;
 use utoipa::{OpenApi, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::config::DocsConfig;
+use crate::{config::DocsConfig, jobs::ScanService};
 
 use self::error::ApiError;
 
@@ -24,14 +25,19 @@ use self::error::ApiError;
 /// every registered path receive the same JSON error envelope.
 /// Version-local paths are nested once under `/api/v1` for both HTTP routing
 /// and OpenAPI. Documentation routes are attached at the application root.
-pub(crate) fn router(config: &DocsConfig, pool: &sqlx::SqlitePool) -> Router {
+pub(crate) fn router(
+    config: &DocsConfig,
+    pool: &sqlx::SqlitePool,
+    scans: ScanService,
+) -> Router {
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
         .merge(artists::router(pool.clone()))
         .merge(releases::router(pool.clone()))
         .merge(recordings::router(pool.clone()))
         .merge(release_tracks::router(pool.clone()))
-        .merge(audio_files::router(pool.clone()));
+        .merge(audio_files::router(pool.clone()))
+        .merge(scans::router(pool.clone(), scans));
     let (router, schema) =
         OpenApiRouter::with_openapi(docs::ApiDoc::openapi())
             .nest("/api/v1", v1)
@@ -89,7 +95,11 @@ mod tests {
 
     /// Build the default router with all documentation routes disabled.
     fn router() -> Router {
-        super::router(&DocsConfig::default(), &test_pool())
+        super::router(
+            &DocsConfig::default(),
+            &test_pool(),
+            ScanService::new(test_pool(), vec![]),
+        )
     }
 
     /// Supply unused state for routes that do not access the database.
@@ -234,7 +244,11 @@ mod tests {
     #[tokio::test]
     async fn unversioned_and_unknown_api_paths_return_json_not_found() {
         for enabled in [false, true] {
-            let app = super::router(&DocsConfig { enabled }, &test_pool());
+            let app = super::router(
+                &DocsConfig { enabled },
+                &test_pool(),
+                ScanService::new(test_pool(), vec![]),
+            );
             for path in [
                 "/health",
                 "/api/v1",

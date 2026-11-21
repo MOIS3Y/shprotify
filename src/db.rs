@@ -6,9 +6,11 @@
 
 pub(crate) mod artists;
 pub(crate) mod audio_files;
+pub(crate) mod indexing;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
+pub(crate) mod scans;
 
 use std::{path::Path, time::Duration};
 
@@ -134,7 +136,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6]);
         pool.close().await;
     }
 
