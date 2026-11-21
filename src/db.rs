@@ -5,6 +5,7 @@
 //! seconds for a SQLite write lock; WAL allows concurrent readers.
 
 pub(crate) mod artists;
+pub(crate) mod audio_files;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
@@ -133,7 +134,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4]);
+        assert_eq!(versions, [1, 2, 3, 4, 5]);
         pool.close().await;
     }
 
@@ -267,6 +268,81 @@ mod tests {
         );
         assert!(
             release_tracks::list(&pool, release.id, 50, 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        pool.close().await;
+    }
+
+    /// Adding file metadata preserves recordings and existing track positions.
+    #[tokio::test]
+    async fn upgrades_track_catalog_to_audio_file_schema() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("library.db");
+        for (name, sql) in [
+            (
+                "1_create_artists.sql",
+                include_str!("../migrations/1_create_artists.sql"),
+            ),
+            (
+                "2_create_releases.sql",
+                include_str!("../migrations/2_create_releases.sql"),
+            ),
+            (
+                "3_create_recordings.sql",
+                include_str!("../migrations/3_create_recordings.sql"),
+            ),
+            (
+                "4_create_release_tracks.sql",
+                include_str!("../migrations/4_create_release_tracks.sql"),
+            ),
+        ] {
+            fs::write(directory.path().join(name), sql).unwrap();
+        }
+        let previous = Migrator::new(directory.path()).await.unwrap();
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        let recording = recordings::create(
+            &pool,
+            crate::library::recordings::NewRecording::new("Existing", vec![])
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let release = releases::create(
+            &pool,
+            crate::library::releases::NewRelease::new(
+                "Existing album",
+                crate::library::releases::ReleaseKind::Album,
+                vec![],
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let track = release_tracks::create(
+            &pool,
+            release.id,
+            crate::library::release_tracks::NewReleaseTrack::new(
+                recording.id,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = connect(&path).await.unwrap();
+        let stored = release_tracks::find(&pool, release.id, track.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.recording_id, recording.id);
+        assert_eq!((stored.disc_number, stored.position), (2, 3));
+        assert!(
+            audio_files::list(&pool, recording.id, 50, 0)
                 .await
                 .unwrap()
                 .is_empty()

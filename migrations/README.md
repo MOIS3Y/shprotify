@@ -25,3 +25,8 @@ The fourth adds `release_tracks`: recording occurrences with positive disc
 numbers and positions. Slots are unique per release/disc/position, while
 recordings can occur at multiple slots or in multiple releases. Release
 deletion cascades to tracks; referenced recordings cannot be deleted.
+
+The fifth adds `audio_files` metadata with a globally unique normalized
+absolute path and optional positive audio properties. Several files may
+represent one recording. Referenced recordings cannot be deleted; file
+registration does not access, create, move, or remove physical files.

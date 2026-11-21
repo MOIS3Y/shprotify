@@ -1,6 +1,7 @@
 //! Versioned HTTP routing and process health endpoint.
 
 mod artists;
+mod audio_files;
 mod docs;
 pub(crate) mod error;
 mod pagination;
@@ -29,7 +30,8 @@ pub(crate) fn router(config: &DocsConfig, pool: &sqlx::SqlitePool) -> Router {
         .merge(artists::router(pool.clone()))
         .merge(releases::router(pool.clone()))
         .merge(recordings::router(pool.clone()))
-        .merge(release_tracks::router(pool.clone()));
+        .merge(release_tracks::router(pool.clone()))
+        .merge(audio_files::router(pool.clone()));
     let (router, schema) =
         OpenApiRouter::with_openapi(docs::ApiDoc::openapi())
             .nest("/api/v1", v1)

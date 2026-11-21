@@ -13,7 +13,7 @@
 //! - 422: `validation_error`, invalid JSON fields or domain input.
 //! - 404: `not_found`, "Resource not found".
 //! - 405: `method_not_allowed`, "Method not allowed"; routing adds `Allow`.
-//! - 409: `conflict`, a requested catalog position is occupied.
+//! - 409: `conflict`, catalog state conflicts with the requested change.
 //! - 500: `internal_error`, "Internal server error".
 
 use axum::{

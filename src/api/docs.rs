@@ -28,7 +28,7 @@ Errors use a JSON envelope with `error.code` and `error.message`:
 - 422: `validation_error` — Invalid JSON fields or domain input.
 - 404: `not_found` — Resource not found.
 - 405: `method_not_allowed` — Method not allowed; includes `Allow`.
-- 409: `conflict` — Requested catalog position is occupied.
+- 409: `conflict` — Catalog state conflicts with the requested change.
 - 500: `internal_error` — Internal server error.
 
 Internal failure details are logged on the server and never returned.
@@ -39,7 +39,8 @@ HEAD responses have no body, including error responses."
         (name = "artists", description = "Shared artist catalog"),
         (name = "releases", description = "Releases and artist credits"),
         (name = "recordings", description = "Independent musical recordings"),
-        (name = "release_tracks", description = "Tracks within releases")
+        (name = "release_tracks", description = "Tracks within releases"),
+        (name = "audio_files", description = "Declared file metadata")
     ),
     components(schemas(ErrorResponse), responses(ErrorResponse))
 )]
@@ -176,7 +177,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 9);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 11);
         assert!(schema["paths"].get("/health").is_none());
     }
 
@@ -333,6 +334,56 @@ mod tests {
         ] {
             assert_eq!(track[field]["type"], "integer");
             assert_eq!(track[field]["minimum"], 1);
+        }
+    }
+
+    /// File routes describe registration, optional quality, and parent scope.
+    #[tokio::test]
+    async fn schema_contains_audio_file_metadata_contracts() {
+        let response = get("/openapi.json", true).await;
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let schema: Value = serde_json::from_slice(&body).unwrap();
+        let paths = &schema["paths"];
+        let collection = &paths["/api/v1/recordings/{id}/files"];
+        let create = &collection["post"];
+        assert_eq!(create["operationId"], "register_audio_file");
+        assert!(create["responses"]["201"]["headers"]["Location"].is_object());
+        for status in ["400", "404", "409", "413", "415", "422", "500"] {
+            assert_eq!(
+                create["responses"][status]["$ref"],
+                "#/components/responses/ErrorResponse"
+            );
+        }
+        let list = &collection["get"];
+        assert_eq!(list["operationId"], "list_audio_files");
+        assert_eq!(list["parameters"].as_array().unwrap().len(), 3);
+        let detail = &paths["/api/v1/recordings/{id}/files/{file_id}"]["get"];
+        assert_eq!(detail["operationId"], "get_audio_file");
+        let schemas = &schema["components"]["schemas"];
+        let input = &schemas["RegisterFile"];
+        assert!(
+            !input["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("properties"))
+        );
+        assert!(input["properties"].get("recording_id").is_none());
+        assert_eq!(
+            schemas["AudioFile"]["properties"]["properties"]["$ref"],
+            "#/components/schemas/AudioProperties"
+        );
+        for field in [
+            "size_bytes",
+            "duration_ms",
+            "sample_rate_hz",
+            "channels",
+            "bit_depth",
+            "bitrate_bps",
+        ] {
+            assert_eq!(
+                schemas["AudioProperties"]["properties"][field]["minimum"],
+                1
+            );
         }
     }
 }
