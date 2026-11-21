@@ -1,0 +1,19 @@
+# Complete example of all currently supported configuration settings.
+# Copy examples/shprotify.toml to dev/shprotify.toml and run:
+# cargo run -- --config dev/shprotify.toml
+# Without --config, only defaults and environment variables are used.
+# Override nested keys with SHPROTIFY_ and __, for example:
+# SHPROTIFY_HTTP__BIND=127.0.0.1:8080
+
+[http]
+bind = "127.0.0.1:3000"
+
+[database]
+# Relative to the working directory, not to this configuration file.
+path = "dev/shprotify.db"
+
+[logging]
+# trace, debug, info, warn, error
+level = "info"
+# pretty, json
+format = "pretty"

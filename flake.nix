@@ -25,7 +25,11 @@
         commonArgs = {
           pname = cargoPackage.name;
           version = cargoPackage.version;
-          src = craneLib.cleanCargoSource ./.;
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter =
+              path: type: craneLib.filterCargoSources path type || path == toString ./examples/shprotify.toml;
+          };
           strictDeps = true;
 
           meta = {

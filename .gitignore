@@ -4,6 +4,9 @@
 *.pdb
 rustc-ice-*.txt
 
+# Local configuration, databases, music, and other development artifacts
+/dev/
+
 # Cargo tools
 **/mutants.out*/
 
@@ -21,8 +24,3 @@ rustc-ice-*.txt
 # Operating systems
 .DS_Store
 Thumbs.db
-
-
-# Added by cargo
-
-/target
