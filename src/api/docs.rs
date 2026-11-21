@@ -18,7 +18,8 @@ use super::error::ErrorResponse;
 #[openapi(
     info(
         title = "Shprotify API",
-        description = "Self-hosted music server HTTP API.
+        description = "Self-hosted music server HTTP API, version 1.
+All API operations are served under `/api/v1`.
 
 Errors use a JSON envelope with `error.code` and `error.message`:
 - 404: `not_found` — Resource not found.
@@ -137,7 +138,7 @@ mod tests {
         assert!(schema["openapi"].as_str().unwrap().starts_with("3."));
         assert_eq!(schema["info"]["title"], "Shprotify API");
         assert_eq!(schema["info"]["version"], env!("CARGO_PKG_VERSION"));
-        let operation = &schema["paths"]["/health"]["get"];
+        let operation = &schema["paths"]["/api/v1/health"]["get"];
         assert_eq!(operation["operationId"], "get_health");
         assert_eq!(operation["tags"][0], "system");
         let response = &operation["responses"]["200"]["content"];
@@ -164,5 +165,6 @@ mod tests {
             "#/components/schemas/ErrorBody"
         );
         assert_eq!(schema["paths"].as_object().unwrap().len(), 1);
+        assert!(schema["paths"].get("/health").is_none());
     }
 }

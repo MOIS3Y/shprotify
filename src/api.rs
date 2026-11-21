@@ -1,4 +1,4 @@
-//! HTTP routing and process health endpoint.
+//! Versioned HTTP routing and process health endpoint.
 
 mod docs;
 pub(crate) mod error;
@@ -16,10 +16,13 @@ use self::error::ApiError;
 ///
 /// Register all routes before the method fallback so unsupported methods on
 /// every registered path receive the same JSON error envelope.
+/// Version-local paths are nested once under `/api/v1` for both HTTP routing
+/// and OpenAPI. Documentation routes are attached at the application root.
 pub(crate) fn router(config: &DocsConfig) -> Router {
+    let v1 = OpenApiRouter::new().routes(routes!(health));
     let (router, schema) =
         OpenApiRouter::with_openapi(docs::ApiDoc::openapi())
-            .routes(routes!(health))
+            .nest("/api/v1", v1)
             .split_for_parts();
 
     docs::attach(router, schema, config)
@@ -81,7 +84,9 @@ mod tests {
     #[tokio::test]
     async fn health_returns_ok_json() {
         let response = router()
-            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/v1/health").body(Body::empty()).unwrap(),
+            )
             .await
             .unwrap();
 
@@ -134,7 +139,7 @@ mod tests {
                 .oneshot(
                     Request::builder()
                         .method(method)
-                        .uri("/health")
+                        .uri("/api/v1/health")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -166,7 +171,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("HEAD")
-                    .uri("/health")
+                    .uri("/api/v1/health")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -206,5 +211,33 @@ mod tests {
     /// Simulate a failing dependency without exposing a production endpoint.
     async fn failing_handler() -> Result<(), ApiError> {
         Err(anyhow::anyhow!("database password=secret").into())
+    }
+
+    /// Only v1 API paths exist, independently of documentation visibility.
+    #[tokio::test]
+    async fn unversioned_and_unknown_api_paths_return_json_not_found() {
+        for enabled in [false, true] {
+            let app = super::router(&DocsConfig { enabled });
+            for path in [
+                "/health",
+                "/api/v1",
+                "/api/v1/",
+                "/api/v1/missing",
+                "/api/v2/health",
+                "/api/v1/docs",
+                "/api/v1/openapi.json",
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::NOT_FOUND);
+                let body = to_bytes(response.into_body(), 1024).await.unwrap();
+                let error: serde_json::Value =
+                    serde_json::from_slice(&body).unwrap();
+                assert_eq!(error["error"]["code"], "not_found", "{path}");
+            }
+        }
     }
 }

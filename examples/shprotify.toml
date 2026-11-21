@@ -6,7 +6,7 @@
 # SHPROTIFY_HTTP__BIND=127.0.0.1:8080
 
 [http]
-# GET /health reports process liveness. SIGINT/SIGTERM stop the server.
+# GET /api/v1/health reports liveness. SIGINT/SIGTERM stop the server.
 bind = "127.0.0.1:3000"
 
 [database]
