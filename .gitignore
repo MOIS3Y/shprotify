@@ -1,0 +1,28 @@
+# Rust and Cargo
+/target/
+**/*.rs.bk
+*.pdb
+rustc-ice-*.txt
+
+# Cargo tools
+**/mutants.out*/
+
+# Nix
+/result
+/result-*
+.direnv/
+
+# Editors
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+
+# Added by cargo
+
+/target
