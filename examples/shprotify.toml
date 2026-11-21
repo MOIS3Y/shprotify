@@ -15,6 +15,14 @@ bind = "127.0.0.1:3000"
 # Uses WAL, foreign keys, and a 5-second write-lock wait (pool: 1–5).
 path = "dev/shprotify.db"
 
+[library]
+# Existing readable directories, relative to the working directory or absolute.
+# Files are never moved, renamed, or modified; scanning is not implemented yet.
+# Startup resolves symlinks and rejects duplicate or overlapping roots.
+directories = []
+# Example: directories = ["dev/music", "/mnt/music archive"]
+# Environment: SHPROTIFY_LIBRARY__DIRECTORIES='["/srv/music", "/mnt/archive"]'
+
 [logging]
 # Minimum severity: trace, debug, info, warn, error. RUST_LOG is not used.
 level = "info"

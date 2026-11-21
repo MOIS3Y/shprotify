@@ -13,7 +13,9 @@ use crate::{
     api,
     cli::Cli,
     config::{Config, DocsConfig},
-    db, logging,
+    db,
+    library::directories,
+    logging,
 };
 
 /// Load settings, initialize logs, and serve HTTP until a shutdown signal.
@@ -21,13 +23,23 @@ use crate::{
 /// Signal registration and binding errors stop startup. The server drains
 /// active requests before returning after SIGINT or SIGTERM. Migrations run
 /// before serving HTTP, and the pool is closed when HTTP serving finishes
-/// or fails, including listener binding errors.
+/// or fails, including listener binding errors. External directory checks
+/// complete before opening the database and run outside async worker threads.
 pub(crate) async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = Config::load(cli.config.as_deref())?;
     logging::init(&config.logging)?;
 
     let shutdown = shutdown_signal()?;
+    let paths = config.library.directories;
+    let roots =
+        tokio::task::spawn_blocking(move || directories::prepare(&paths))
+            .await
+            .context("Failed to prepare library directories")??;
+    tracing::info!(
+        directory_count = roots.len(),
+        "External library directories validated"
+    );
     let database = db::connect(Path::new(&config.database.path)).await?;
     tracing::info!("SQLite database initialized; migrations applied");
     let result =

@@ -4,7 +4,11 @@
 //! Separate nested keys with `__`, for example `SHPROTIFY_HTTP__BIND`.
 //! Relative database paths are resolved against the working directory.
 
-use std::{fs, net::SocketAddr, path::Path};
+use std::{
+    fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, ensure};
 use figment::{
@@ -17,6 +21,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
+    /// External collection roots checked separately before HTTP startup.
+    pub(crate) library: LibraryConfig,
     /// HTTP listener settings.
     pub(crate) http: HttpConfig,
     /// SQLite storage settings.
@@ -25,6 +31,15 @@ pub(crate) struct Config {
     pub(crate) logging: LoggingConfig,
     /// Optional interactive API documentation and OpenAPI schema.
     pub(crate) docs: DocsConfig,
+}
+
+/// External music directories; an empty list keeps catalog-only use possible.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LibraryConfig {
+    /// Existing readable directories, relative to the working directory or
+    /// absolute. Startup resolves aliases and rejects overlapping roots.
+    pub(crate) directories: Vec<PathBuf>,
 }
 
 /// Documentation routes enabled at startup; disabled by default.
@@ -139,7 +154,7 @@ impl Config {
         Ok(figment)
     }
 
-    /// Deserialize merged values and reject a blank database path.
+    /// Deserialize merged values and reject empty configured paths.
     ///
     /// Serde rejects unknown fields, invalid enum variants, and malformed
     /// socket addresses before semantic validation runs.
@@ -149,6 +164,14 @@ impl Config {
         ensure!(
             !config.database.path.trim().is_empty(),
             "database.path must not be empty"
+        );
+        ensure!(
+            config
+                .library
+                .directories
+                .iter()
+                .all(|path| !path.as_os_str().is_empty()),
+            "library.directories must not contain empty paths"
         );
         Ok(config)
     }
@@ -174,6 +197,7 @@ mod tests {
         assert!(matches!(config.logging.level, LogLevel::Info));
         assert!(matches!(config.logging.format, LogFormat::Pretty));
         assert!(!config.docs.enabled);
+        assert!(config.library.directories.is_empty());
     }
 
     /// Partial TOML preserves defaults for unspecified fields.
@@ -206,6 +230,10 @@ mod tests {
             "[logging]\nformat = 'xml'",
             "[docs]\nenabled = 'yes'",
             "[docs]\nunknown = true",
+            "[library]\ndirectories = '/music'",
+            "[library]\ndirectories = [42]",
+            "[library]\ndirectories = ['']",
+            "[library]\nunknown = true",
             "[http]\nport = 3000",
             "[unknown]\nenabled = true",
             "[http",
@@ -246,6 +274,10 @@ mod tests {
             assert!(matches!(config.logging.level, LogLevel::Debug));
             assert!(matches!(config.logging.format, LogFormat::Json));
             assert!(config.docs.enabled);
+            assert_eq!(
+                config.library.directories,
+                [PathBuf::from("/music files"), PathBuf::from("/archive")]
+            );
             return;
         }
 
@@ -265,6 +297,10 @@ mod tests {
             .env("SHPROTIFY_LOGGING__LEVEL", "debug")
             .env("SHPROTIFY_LOGGING__FORMAT", "json")
             .env("SHPROTIFY_DOCS__ENABLED", "true")
+            .env(
+                "SHPROTIFY_LIBRARY__DIRECTORIES",
+                r#"["/music files", "/archive"]"#,
+            )
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
@@ -275,5 +311,21 @@ mod tests {
     fn documentation_can_be_enabled() {
         let config = from_toml("[docs]\nenabled = true").unwrap();
         assert!(config.docs.enabled);
+    }
+
+    /// Configuration parsing preserves paths; filesystem checks occur later.
+    #[test]
+    fn loads_external_directory_paths_without_accessing_them() {
+        let config = from_toml(
+            "[library]\ndirectories = ['dev/music', '/mnt/music archive']",
+        )
+        .unwrap();
+        assert_eq!(
+            config.library.directories,
+            [
+                PathBuf::from("dev/music"),
+                PathBuf::from("/mnt/music archive")
+            ]
+        );
     }
 }

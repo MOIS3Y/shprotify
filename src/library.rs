@@ -1,6 +1,7 @@
 //! Shared music catalog entities and their validation rules.
 
 pub(crate) mod audio_files;
+pub(crate) mod directories;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
