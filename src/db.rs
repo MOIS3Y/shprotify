@@ -6,6 +6,7 @@
 
 pub(crate) mod artists;
 pub(crate) mod recordings;
+pub(crate) mod release_tracks;
 pub(crate) mod releases;
 
 use std::{path::Path, time::Duration};
@@ -132,7 +133,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3]);
+        assert_eq!(versions, [1, 2, 3, 4]);
         pool.close().await;
     }
 
@@ -209,6 +210,67 @@ mod tests {
         assert_eq!(fetched.title, release.title);
         assert_eq!(fetched.artist_ids, [artist.id]);
         assert!(recordings::list(&pool, 50, 0).await.unwrap().is_empty());
+        pool.close().await;
+    }
+
+    /// Adding track placements leaves the existing catalog identities intact.
+    #[tokio::test]
+    async fn upgrades_recording_catalog_to_track_schema() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("library.db");
+        for (name, sql) in [
+            (
+                "1_create_artists.sql",
+                include_str!("../migrations/1_create_artists.sql"),
+            ),
+            (
+                "2_create_releases.sql",
+                include_str!("../migrations/2_create_releases.sql"),
+            ),
+            (
+                "3_create_recordings.sql",
+                include_str!("../migrations/3_create_recordings.sql"),
+            ),
+        ] {
+            fs::write(directory.path().join(name), sql).unwrap();
+        }
+        let previous = Migrator::new(directory.path()).await.unwrap();
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        let recording = recordings::create(
+            &pool,
+            crate::library::recordings::NewRecording::new("Existing", vec![])
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let release = releases::create(
+            &pool,
+            crate::library::releases::NewRelease::new(
+                "Existing album",
+                crate::library::releases::ReleaseKind::Album,
+                vec![],
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = connect(&path).await.unwrap();
+        assert_eq!(
+            recordings::find(&pool, recording.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .title,
+            "Existing"
+        );
+        assert!(
+            release_tracks::list(&pool, release.id, 50, 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         pool.close().await;
     }
 

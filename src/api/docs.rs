@@ -28,6 +28,7 @@ Errors use a JSON envelope with `error.code` and `error.message`:
 - 422: `validation_error` — Invalid JSON fields or domain input.
 - 404: `not_found` — Resource not found.
 - 405: `method_not_allowed` — Method not allowed; includes `Allow`.
+- 409: `conflict` — Requested catalog position is occupied.
 - 500: `internal_error` — Internal server error.
 
 Internal failure details are logged on the server and never returned.
@@ -37,7 +38,8 @@ HEAD responses have no body, including error responses."
         (name = "system", description = "Process health"),
         (name = "artists", description = "Shared artist catalog"),
         (name = "releases", description = "Releases and artist credits"),
-        (name = "recordings", description = "Independent musical recordings")
+        (name = "recordings", description = "Independent musical recordings"),
+        (name = "release_tracks", description = "Tracks within releases")
     ),
     components(schemas(ErrorResponse), responses(ErrorResponse))
 )]
@@ -174,7 +176,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 7);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 9);
         assert!(schema["paths"].get("/health").is_none());
     }
 
@@ -287,5 +289,50 @@ mod tests {
         assert!(input.get("file_path").is_none());
         assert!(input.get("kind").is_none());
         assert!(paths.get("/recordings").is_none());
+    }
+
+    /// Nested track routes document defaults, parent IDs, and slot conflicts.
+    #[tokio::test]
+    async fn schema_contains_release_track_contracts() {
+        let response = get("/openapi.json", true).await;
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let schema: Value = serde_json::from_slice(&body).unwrap();
+        let paths = &schema["paths"];
+        let collection = &paths["/api/v1/releases/{id}/tracks"];
+        let create = &collection["post"];
+        assert_eq!(create["operationId"], "create_release_track");
+        assert!(create["responses"]["201"]["headers"]["Location"].is_object());
+        for status in ["400", "404", "409", "413", "415", "422", "500"] {
+            assert_eq!(
+                create["responses"][status]["$ref"],
+                "#/components/responses/ErrorResponse"
+            );
+        }
+        let list = &collection["get"];
+        assert_eq!(list["operationId"], "list_release_tracks");
+        assert_eq!(list["parameters"].as_array().unwrap().len(), 3);
+        let detail = &paths["/api/v1/releases/{id}/tracks/{track_id}"]["get"];
+        assert_eq!(detail["operationId"], "get_release_track");
+        assert_eq!(detail["parameters"].as_array().unwrap().len(), 2);
+        let schemas = &schema["components"]["schemas"];
+        let input = &schemas["CreateTrack"];
+        assert_eq!(input["properties"]["disc_number"]["default"], 1);
+        assert!(
+            !input["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("disc_number"))
+        );
+        let track = &schemas["ReleaseTrack"]["properties"];
+        for field in [
+            "id",
+            "release_id",
+            "recording_id",
+            "disc_number",
+            "position",
+        ] {
+            assert_eq!(track[field]["type"], "integer");
+            assert_eq!(track[field]["minimum"], 1);
+        }
     }
 }

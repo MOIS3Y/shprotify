@@ -20,3 +20,8 @@ artist is restricted, while deleting a release removes its credits.
 The third adds independent `recordings` and ordered `recording_artists`.
 Recordings have no release or audio file dependency. Artist deletion is
 restricted while credited; deleting a recording removes its credits.
+
+The fourth adds `release_tracks`: recording occurrences with positive disc
+numbers and positions. Slots are unique per release/disc/position, while
+recordings can occur at multiple slots or in multiple releases. Release
+deletion cascades to tracks; referenced recordings cannot be deleted.

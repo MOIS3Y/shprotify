@@ -13,6 +13,7 @@
 //! - 422: `validation_error`, invalid JSON fields or domain input.
 //! - 404: `not_found`, "Resource not found".
 //! - 405: `method_not_allowed`, "Method not allowed"; routing adds `Allow`.
+//! - 409: `conflict`, a requested catalog position is occupied.
 //! - 500: `internal_error`, "Internal server error".
 
 use axum::{
@@ -27,6 +28,9 @@ use utoipa::ToSchema;
 /// HTTP failure with a stable client-facing code and message.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
+    /// The requested state conflicts with an existing catalog resource.
+    #[error("{0}")]
+    Conflict(&'static str),
     /// Malformed request parameters or JSON syntax.
     #[error("{0}")]
     BadRequest(&'static str),
@@ -89,6 +93,7 @@ struct ErrorBody {
         "validation_error",
         "not_found",
         "method_not_allowed",
+        "conflict",
         "internal_error"
     ))]
     code: &'static str,
@@ -101,6 +106,7 @@ impl IntoResponse for ApiError {
     /// Render the JSON envelope and log unexpected failures once at ERROR.
     fn into_response(self) -> Response {
         let (status, code) = match &self {
+            Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::Validation(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "validation_error")
