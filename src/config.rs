@@ -18,19 +18,19 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
     /// HTTP listener settings.
-    http: HttpConfig,
+    pub(crate) http: HttpConfig,
     /// SQLite storage settings.
     database: DatabaseConfig,
     /// Log filtering and output settings.
-    logging: LoggingConfig,
+    pub(crate) logging: LoggingConfig,
 }
 
 /// Address on which the HTTP server will listen.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct HttpConfig {
+pub(crate) struct HttpConfig {
     /// Numeric IPv4 or IPv6 socket address, including the port.
-    bind: SocketAddr,
+    pub(crate) bind: SocketAddr,
 }
 
 impl Default for HttpConfig {
@@ -62,17 +62,17 @@ impl Default for DatabaseConfig {
 /// Filtering and rendering options for application logs.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct LoggingConfig {
+pub(crate) struct LoggingConfig {
     /// Minimum severity to emit.
-    level: LogLevel,
+    pub(crate) level: LogLevel,
     /// Output representation for each log event.
-    format: LogFormat,
+    pub(crate) format: LogFormat,
 }
 
 /// Supported minimum log severities, serialized in lowercase.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum LogLevel {
+pub(crate) enum LogLevel {
     /// Include detailed execution traces.
     Trace,
     /// Include diagnostic events useful during development.
@@ -89,7 +89,7 @@ enum LogLevel {
 /// Supported log representations, serialized in lowercase.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum LogFormat {
+pub(crate) enum LogFormat {
     /// Human-readable console output; the default format.
     #[default]
     Pretty,

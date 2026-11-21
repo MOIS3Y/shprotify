@@ -6,6 +6,7 @@
 # SHPROTIFY_HTTP__BIND=127.0.0.1:8080
 
 [http]
+# GET /health reports process liveness. SIGINT/SIGTERM stop the server.
 bind = "127.0.0.1:3000"
 
 [database]
@@ -13,7 +14,7 @@ bind = "127.0.0.1:3000"
 path = "dev/shprotify.db"
 
 [logging]
-# trace, debug, info, warn, error
+# Minimum severity: trace, debug, info, warn, error. RUST_LOG is not used.
 level = "info"
-# pretty, json
+# stderr output: pretty (terminal colors when available), json.
 format = "pretty"
