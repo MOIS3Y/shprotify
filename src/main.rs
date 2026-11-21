@@ -4,6 +4,7 @@ mod api;
 mod app;
 mod cli;
 mod config;
+mod db;
 mod logging;
 
 /// Delegate startup and report any error through the process exit status.

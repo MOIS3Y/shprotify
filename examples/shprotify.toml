@@ -11,6 +11,8 @@ bind = "127.0.0.1:3000"
 
 [database]
 # Relative to the working directory, not to this configuration file.
+# Parent directory must exist; the database file is created if missing.
+# Uses WAL, foreign keys, and a 5-second write-lock wait (pool: 1–5).
 path = "dev/shprotify.db"
 
 [logging]

@@ -28,7 +28,10 @@
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
             filter =
-              path: type: craneLib.filterCargoSources path type || path == toString ./examples/shprotify.toml;
+              path: type:
+              craneLib.filterCargoSources path type
+              || path == toString ./examples/shprotify.toml
+              || pkgs.lib.hasPrefix "${toString ./migrations}/" path;
           };
           strictDeps = true;
 

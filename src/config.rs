@@ -20,7 +20,7 @@ pub(crate) struct Config {
     /// HTTP listener settings.
     pub(crate) http: HttpConfig,
     /// SQLite storage settings.
-    database: DatabaseConfig,
+    pub(crate) database: DatabaseConfig,
     /// Log filtering and output settings.
     pub(crate) logging: LoggingConfig,
 }
@@ -45,9 +45,9 @@ impl Default for HttpConfig {
 /// Location of the SQLite database file.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct DatabaseConfig {
+pub(crate) struct DatabaseConfig {
     /// Nonblank path, relative to the process working directory if needed.
-    path: String,
+    pub(crate) path: String,
 }
 
 impl Default for DatabaseConfig {
