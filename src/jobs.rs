@@ -111,6 +111,11 @@ struct Workers {
 }
 
 impl ScanService {
+    /// Share canonical collection roots with read-only media access.
+    pub(crate) fn roots(&self) -> Arc<Vec<PathBuf>> {
+        Arc::clone(&self.roots)
+    }
+
     /// Build an idle service from roots already checked during startup.
     pub(crate) fn new(pool: SqlitePool, roots: Vec<PathBuf>) -> Self {
         Self {

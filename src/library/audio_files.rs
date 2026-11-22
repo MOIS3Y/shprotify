@@ -3,7 +3,7 @@
 //! Registration stores declared properties without checking file existence.
 //! Read-only media probing lives in `metadata`; registration does not invoke
 //! it or resolve symlinks. Background indexing can refresh stored properties.
-//! Streaming belongs to the later audio stage.
+//! Authenticated streaming is handled separately by the audio module.
 
 use std::path::{Component, Path, PathBuf};
 

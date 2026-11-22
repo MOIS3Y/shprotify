@@ -12,6 +12,7 @@
 //! - 403: `forbidden`, authenticated account lacks administrator privileges.
 //! - 413: `payload_too_large`, request body exceeds the extractor limit.
 //! - 415: `unsupported_media_type`, JSON content type is required.
+//! - 416: `range_not_satisfiable`, invalid/unavailable requested bytes.
 //! - 422: `validation_error`, invalid JSON fields or domain input.
 //! - 429: `too_many_requests`, password workers are busy; retry later.
 //! - 404: `not_found`, "Resource not found".
@@ -31,6 +32,9 @@ use utoipa::ToSchema;
 /// HTTP failure with a stable client-facing code and message.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
+    /// The selected byte interval is invalid or outside the current file.
+    #[error("Requested byte range is not satisfiable")]
+    RangeNotSatisfiable,
     /// Password verification is at capacity; avoid queued costly work.
     #[error("Too many password operations; retry later")]
     TooManyRequests,
@@ -105,6 +109,7 @@ struct ErrorBody {
         "payload_too_large",
         "unsupported_media_type",
         "validation_error",
+        "range_not_satisfiable",
         "too_many_requests",
         "not_found",
         "method_not_allowed",
@@ -121,6 +126,9 @@ impl IntoResponse for ApiError {
     /// Render the JSON envelope and log unexpected failures once at ERROR.
     fn into_response(self) -> Response {
         let (status, code) = match &self {
+            Self::RangeNotSatisfiable => {
+                (StatusCode::RANGE_NOT_SATISFIABLE, "range_not_satisfiable")
+            }
             Self::TooManyRequests => {
                 (StatusCode::TOO_MANY_REQUESTS, "too_many_requests")
             }

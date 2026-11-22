@@ -15,6 +15,7 @@ mod releases;
 mod scans;
 mod search;
 mod sessions;
+mod streaming;
 mod users;
 
 use axum::{Json, Router};
@@ -40,6 +41,7 @@ pub(crate) fn router(
 ) -> Router {
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
+        .merge(streaming::router(pool.clone(), scans.roots()))
         .merge(sessions::router(pool.clone(), *auth))
         .merge(personal::router(pool.clone()))
         .merge(users::router(pool.clone()))
