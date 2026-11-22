@@ -180,3 +180,5 @@ with a Bearer `WWW-Authenticate` challenge. Storage failures remain safe 500
 responses. Swagger's Authorize control accepts the raw token for these routes.
 
 Client-reported listening history is documented in [history.md](history.md).
+
+Private named playlists are documented in [playlists.md](playlists.md).

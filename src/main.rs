@@ -10,6 +10,7 @@ mod db;
 mod jobs;
 mod library;
 mod logging;
+mod playlists;
 
 /// Delegate startup and report any error through the process exit status.
 #[tokio::main]

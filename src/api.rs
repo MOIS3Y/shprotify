@@ -10,6 +10,7 @@ mod pagination;
 #[cfg(test)]
 mod permissions;
 mod personal;
+mod playlists;
 mod recordings;
 mod release_tracks;
 mod releases;
@@ -46,6 +47,7 @@ pub(crate) fn router(
         .merge(sessions::router(pool.clone(), *auth))
         .merge(personal::router(pool.clone()))
         .merge(history::router(pool.clone()))
+        .merge(playlists::router(pool.clone()))
         .merge(users::router(pool.clone()))
         .merge(artists::router(pool.clone()))
         .merge(releases::router(pool.clone()))
