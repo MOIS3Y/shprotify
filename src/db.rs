@@ -10,6 +10,7 @@ pub(crate) mod duplicates;
 pub(crate) mod history;
 pub(crate) mod indexing;
 mod matching;
+pub(crate) mod metadata;
 pub(crate) mod playlists;
 pub(crate) mod queue;
 pub(crate) mod reactions;
@@ -85,6 +86,60 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// Metadata migration preserves scanner identity and personal queue state.
+    #[tokio::test]
+    async fn upgrades_catalog_to_metadata_without_rewriting_entities() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let previous = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version <= 18)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        users::create(&pool, "legacy", &crate::auth::digest("legacy"))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Curated')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO scan_recording_matches (mbid,recording_id) \
+            VALUES (?,1)",
+        )
+        .bind("12345678-1234-1234-1234-123456789abc")
+        .execute(&pool)
+        .await
+        .unwrap();
+        queue::update(&pool, 1, 0, Some(&[1, 1]), Some(2), 1234)
+            .await
+            .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let metadata = metadata::get(
+            &pool,
+            crate::library::enrichment::EntityKind::Recording,
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(metadata.version, 1);
+        assert_eq!(metadata.name, "Curated");
+        assert_eq!(
+            metadata.mbid.as_deref(),
+            Some("12345678-1234-1234-1234-123456789abc")
+        );
+        let queue = queue::get(&pool, 1).await.unwrap();
+        assert_eq!(queue.version, 1);
+        assert_eq!(queue.current_position, Some(2));
+        assert_eq!(queue.position_ms, 1234);
+        assert!(metadata::jobs(&pool, 50, 0).await.unwrap().is_empty());
+        pool.close().await;
+    }
 
     /// Existing published playlists survive queue creation without copies.
     #[tokio::test]
@@ -557,7 +612,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=18).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=19).collect::<Vec<_>>());
         pool.close().await;
     }
 

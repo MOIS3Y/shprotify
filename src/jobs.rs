@@ -5,6 +5,8 @@
 //! and completed imports survive a later failure. Graceful shutdown waits for
 //! accepted work before closing SQLite. Startup explicitly recovers old jobs.
 
+pub(crate) mod metadata;
+
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

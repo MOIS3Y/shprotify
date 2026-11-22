@@ -3,7 +3,6 @@
 use std::{
     future::Future,
     io::{self, Write},
-    net::SocketAddr,
     path::{Path, PathBuf},
 };
 
@@ -17,7 +16,7 @@ use tokio::{
 use crate::{
     api,
     cli::{Cli, Command},
-    config::{AuthConfig, Config, DocsConfig},
+    config::Config,
     db,
     jobs::ScanService,
     library::{directories, scan},
@@ -45,7 +44,7 @@ pub(crate) async fn run() -> Result<()> {
         .await;
     }
 
-    let paths = config.library.directories;
+    let paths = config.library.directories.clone();
     let roots =
         tokio::task::spawn_blocking(move || directories::prepare(&paths))
             .await
@@ -64,16 +63,26 @@ pub(crate) async fn run() -> Result<()> {
         database.close().await;
         return Err(error).context("Failed to recover library scan jobs");
     }
+    if let Err(error) = db::metadata::recover(&database).await {
+        database.close().await;
+        return Err(error).context("Failed to recover metadata jobs");
+    }
     let scans = ScanService::new(database.clone(), roots);
-    let result = serve_http(
-        config.http.bind,
-        &config.auth,
-        &config.docs,
-        &database,
-        &scans,
-        shutdown,
-    )
-    .await;
+    let metadata = match crate::jobs::metadata::MetadataService::new(
+        database.clone(),
+        scans.roots(),
+        config.metadata.clone(),
+    ) {
+        Ok(service) => service,
+        Err(error) => {
+            database.close().await;
+            return Err(error)
+                .context("Failed to initialize metadata adapters");
+        }
+    };
+    let result =
+        serve_http(&config, &database, &scans, &metadata, shutdown).await;
+    metadata.close().await;
     scans.close().await;
     database.close().await;
     result
@@ -106,13 +115,13 @@ async fn scan_library(roots: Vec<PathBuf>) -> Result<()> {
 
 /// Bind the listener and serve requests until graceful shutdown completes.
 async fn serve_http(
-    address: SocketAddr,
-    auth: &AuthConfig,
-    docs: &DocsConfig,
+    config: &Config,
     database: &sqlx::SqlitePool,
     scans: &ScanService,
+    metadata: &crate::jobs::metadata::MetadataService,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
+    let address = config.http.bind;
     let listener = TcpListener::bind(address).await.with_context(|| {
         format!("Failed to bind HTTP listener to {address}")
     })?;
@@ -121,10 +130,19 @@ async fn serve_http(
         .context("Failed to read HTTP listener address")?;
     tracing::info!(address = %bound_address, "HTTP server listening");
 
-    axum::serve(listener, api::router(auth, docs, database, scans.clone()))
-        .with_graceful_shutdown(shutdown)
-        .await
-        .context("HTTP server failed")?;
+    axum::serve(
+        listener,
+        api::router_with_metadata(
+            &config.auth,
+            &config.docs,
+            database,
+            scans.clone(),
+            metadata.clone(),
+        ),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await
+    .context("HTTP server failed")?;
     tracing::info!("HTTP server stopped");
     Ok(())
 }

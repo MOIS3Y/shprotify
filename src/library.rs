@@ -1,7 +1,9 @@
 //! Shared catalog entities, validation, and read-only collection scanning.
 
+pub(crate) mod artwork;
 pub(crate) mod audio_files;
 pub(crate) mod directories;
+pub(crate) mod enrichment;
 pub(crate) mod file_state;
 pub(crate) mod matching;
 pub(crate) mod metadata;

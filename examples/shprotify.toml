@@ -50,3 +50,17 @@ format = "pretty"
 # Publish /docs and /openapi.json. Both are absent when disabled.
 # Change requires a restart; override with SHPROTIFY_DOCS__ENABLED=true.
 enabled = false
+
+[metadata]
+# Explicit admin jobs only; normal scans never contact external services.
+# Changes require a restart. Embedded art and manual edits work when disabled.
+enabled = false
+# Required when enabled: identify this app/version and an operator contact.
+# Example: "shprotify/0.1.0 (mailto:operator@example.org)"
+user_agent = ""
+# Optional AcoustID application key; never use a user submission key here.
+# Prefer SHPROTIFY_METADATA__ACOUSTID_KEY to a shared configuration file.
+acoustid_key = ""
+# Optional Chromaprint executable; install fpcalc separately to identify audio.
+# Example: "/run/current-system/sw/bin/fpcalc". Empty disables execution.
+fpcalc_path = ""

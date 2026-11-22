@@ -6,6 +6,7 @@ mod docs;
 mod duplicates;
 pub(crate) mod error;
 mod history;
+mod metadata;
 mod pagination;
 #[cfg(test)]
 mod permissions;
@@ -36,14 +37,33 @@ use self::error::ApiError;
 /// every registered path receive the same JSON error envelope.
 /// Version-local paths are nested once under `/api/v1` for both HTTP routing
 /// and OpenAPI. Documentation routes are attached at the application root.
+#[cfg(test)]
 pub(crate) fn router(
     auth: &crate::config::AuthConfig,
     config: &DocsConfig,
     pool: &sqlx::SqlitePool,
     scans: ScanService,
 ) -> Router {
+    let metadata = crate::jobs::metadata::MetadataService::new(
+        pool.clone(),
+        scans.roots(),
+        crate::config::MetadataConfig::default(),
+    )
+    .expect("Disabled metadata adapters require no configuration");
+    router_with_metadata(auth, config, pool, scans, metadata)
+}
+
+/// Production routing with an application-owned metadata worker lifecycle.
+pub(crate) fn router_with_metadata(
+    auth: &crate::config::AuthConfig,
+    config: &DocsConfig,
+    pool: &sqlx::SqlitePool,
+    scans: ScanService,
+    metadata_service: crate::jobs::metadata::MetadataService,
+) -> Router {
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
+        .merge(metadata::router(pool.clone(), metadata_service))
         .merge(streaming::router(pool.clone(), scans.roots()))
         .merge(sessions::router(pool.clone(), *auth))
         .merge(personal::router(pool.clone()))

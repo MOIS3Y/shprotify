@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Optional external metadata services and acoustic identification.
+    pub(crate) metadata: MetadataConfig,
     /// Password session settings, applied when issuing new credentials.
     pub(crate) auth: AuthConfig,
     /// External collection roots checked separately before HTTP startup.
@@ -33,6 +35,32 @@ pub(crate) struct Config {
     pub(crate) logging: LoggingConfig,
     /// Optional interactive API documentation and OpenAPI schema.
     pub(crate) docs: DocsConfig,
+}
+
+/// Opt-in external lookups; no network requests occur during normal scans.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MetadataConfig {
+    /// Allow MusicBrainz search/lookup and Cover Art Archive jobs.
+    pub(crate) enabled: bool,
+    /// Application identity with operator contact, required when enabled.
+    pub(crate) user_agent: String,
+    /// AcoustID application key; blank disables acoustic identification.
+    pub(crate) acoustid_key: String,
+    /// Chromaprint executable; empty disables fingerprint execution.
+    pub(crate) fpcalc_path: String,
+}
+
+impl Default for MetadataConfig {
+    /// Keep external calls and executable invocation disabled by default.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            user_agent: String::new(),
+            acoustid_key: String::new(),
+            fpcalc_path: String::new(),
+        }
+    }
 }
 
 /// Password sessions have an absolute lifetime independent of activity.
@@ -196,6 +224,23 @@ impl Config {
                 .all(|path| !path.as_os_str().is_empty()),
             "library.directories must not contain empty paths"
         );
+        ensure!(
+            !config.metadata.enabled
+                || (config.metadata.user_agent.len() >= 10
+                    && config.metadata.user_agent.len() <= 255
+                    && config.metadata.user_agent.is_ascii()
+                    && !config
+                        .metadata
+                        .user_agent
+                        .chars()
+                        .any(char::is_control)),
+            "metadata.user_agent must identify the app and operator contact"
+        );
+        ensure!(
+            config.metadata.acoustid_key.len() <= 255
+                && !config.metadata.acoustid_key.chars().any(char::is_control),
+            "Invalid metadata.acoustid_key"
+        );
         Ok(config)
     }
 }
@@ -222,6 +267,8 @@ mod tests {
         assert!(matches!(config.logging.format, LogFormat::Pretty));
         assert!(!config.docs.enabled);
         assert!(config.library.directories.is_empty());
+        assert!(!config.metadata.enabled);
+        assert!(config.metadata.acoustid_key.is_empty());
     }
 
     /// Partial TOML preserves defaults for unspecified fields.
@@ -247,6 +294,9 @@ mod tests {
     #[test]
     fn rejects_invalid_values_and_unknown_fields() {
         for contents in [
+            "[metadata]\nenabled = true",
+            "[metadata]\nenabled = true\nuser_agent = 'bad'",
+            "[metadata]\nunknown = true",
             "[auth]\nsession_ttl_seconds = 0",
             "[auth]\nsession_ttl_seconds = -1",
             "[auth]\nsession_ttl_seconds = 4294967296",

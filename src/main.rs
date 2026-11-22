@@ -11,6 +11,7 @@ mod jobs;
 mod library;
 mod logging;
 mod playlists;
+mod providers;
 
 /// Delegate startup and report any error through the process exit status.
 #[tokio::main]
