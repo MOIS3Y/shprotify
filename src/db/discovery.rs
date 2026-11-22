@@ -544,7 +544,10 @@ async fn decorate(
             'mbid',NULL)) FROM (SELECT a.name FROM recording_artists ra \
             JOIN artists a ON a.id=ra.artist_id WHERE ra.recording_id=r.id \
             ORDER BY ra.position) a),'[]') artists, \
-          EXISTS(SELECT 1 FROM audio_files f WHERE f.recording_id=r.id) \
+          EXISTS(SELECT 1 FROM audio_files f WHERE f.recording_id=r.id \
+            AND NOT EXISTS( \
+                SELECT 1 FROM file_removals d WHERE d.file_id=f.id \
+                AND d.status='pending')) \
             has_audio FROM recordings r LEFT JOIN catalog_metadata m \
           ON m.entity_type='recording' AND m.entity_id=r.id \
         WHERE r.title COLLATE NOCASE IN (SELECT title FROM wanted) \

@@ -69,6 +69,7 @@ impl axum::extract::FromRef<MetadataState> for SqlitePool {
 pub(super) fn router(
     pool: SqlitePool,
     service: MetadataService,
+    public_catalog: bool,
 ) -> OpenApiRouter {
     let json = OpenApiRouter::new()
         .routes(routes!(get_metadata, correct_metadata))
@@ -82,10 +83,17 @@ pub(super) fn router(
         .layer(DefaultBodyLimit::max(16 * 1024));
     let images = OpenApiRouter::new()
         .routes(routes!(put_artwork, delete_artwork))
-        .routes(routes!(get_artwork))
         .layer(DefaultBodyLimit::max(artwork::MAX_BYTES));
+    let covers = OpenApiRouter::new()
+        .routes(routes!(get_artwork))
+        .with_state(MetadataState {
+            pool: pool.clone(),
+            service: service.clone(),
+        });
+    let covers = super::clients::protect(covers, pool.clone(), public_catalog);
     json.merge(images)
         .with_state(MetadataState { pool, service })
+        .merge(covers)
 }
 
 /// Version precondition for raw image upload/removal.

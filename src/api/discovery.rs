@@ -796,6 +796,11 @@ mod tests {
                         None,
                     ),
                     automation: crate::config::AutomationConfig::default(),
+                    clients: crate::config::ClientSettings::default(),
+                    removals: crate::jobs::removals::RemovalService::new(
+                        pool.clone(),
+                        None,
+                    ),
                 },
             );
             Self {

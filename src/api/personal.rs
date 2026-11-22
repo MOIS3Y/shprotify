@@ -27,6 +27,11 @@ pub(super) fn router(pool: SqlitePool) -> OpenApiRouter {
         .routes(routes!(me))
         .routes(routes!(get_reaction, set_reaction, clear_reaction))
         .routes(routes!(favorites))
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(batch_reactions))
+                .layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+        )
         .with_state(pool)
 }
 
@@ -169,6 +174,61 @@ async fn favorites(
         limit: page.limit,
         offset: page.offset,
     }))
+}
+
+/// Bounded reaction lookup for a visible client page, preserving input order.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct ReactionBatchRequest {
+    /// Up to 100 distinct positive recording IDs; an empty list is allowed.
+    recording_ids: Vec<i64>,
+}
+
+/// Current personal reactions plus explicitly missing shared catalog IDs.
+#[derive(Serialize, ToSchema)]
+struct ReactionBatch {
+    /// Existing recording states, including neutral states.
+    items: Vec<ReactionState>,
+    /// Requested IDs that no longer exist; no phantom neutral state is
+    /// created.
+    missing_ids: Vec<i64>,
+}
+
+/// Read page reactions in one request; no recording or preference is changed.
+#[utoipa::path(post,path="/me/recordings/reactions",tag="Favorites",
+    operation_id="batch_recording_reactions",request_body=ReactionBatchRequest,
+    security(("personal_key"=[])),responses(
+        (status=200,description="Personal reaction batch",body=ReactionBatch),
+        (status=401,response=ErrorResponse),
+        (status=400,response=ErrorResponse),
+        (status=413,response=ErrorResponse),
+        (status=415,response=ErrorResponse),
+        (status=422,response=ErrorResponse),
+        (status=500,response=ErrorResponse)))]
+async fn batch_reactions(
+    CurrentUser(user): CurrentUser,
+    State(pool): State<SqlitePool>,
+    body: Result<Json<ReactionBatchRequest>, JsonRejection>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    let Json(body) = body?;
+    let ids = &body.recording_ids;
+    let unique: std::collections::HashSet<_> = ids.iter().collect();
+    if ids.len() > 100
+        || unique.len() != ids.len()
+        || ids.iter().any(|id| *id <= 0)
+    {
+        return Err(ApiError::Validation(
+            "Use at most 100 distinct positive recording IDs",
+        ));
+    }
+    let (items, missing_ids) =
+        db::reactions::batch(&pool, user.id, ids).await?;
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+        Json(ReactionBatch { items, missing_ids }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]

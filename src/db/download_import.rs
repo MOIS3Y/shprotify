@@ -21,6 +21,16 @@ pub(crate) async fn journal(
     path: &str,
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM file_removals \
+            WHERE sha256=? AND status='pending' AND remove_file=1)",
+    )
+    .bind(hash)
+    .fetch_one(&mut *tx)
+    .await?;
+    if pending {
+        return Err(DownloadError::Conflict("File removal is pending"));
+    }
     let changed = sqlx::query(
         "UPDATE download_jobs SET status='importing' \
         WHERE id=? AND status='verifying' AND cancel_requested=0",
@@ -142,6 +152,16 @@ pub(crate) async fn reuse(
     if state.1 || !matches!(state.0.as_str(), "running" | "verifying") {
         return Err(DownloadError::Conflict("Download was cancelled"));
     }
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM file_removals \
+            WHERE file_id=? AND status='pending')",
+    )
+    .bind(file)
+    .fetch_one(&mut *tx)
+    .await?;
+    if pending {
+        return Err(DownloadError::Conflict("File removal is pending"));
+    }
     reconcile(&mut tx, &work.target, recording).await?;
     provenance(&mut tx, work, recording, file).await?;
     tx.commit().await?;
@@ -248,6 +268,16 @@ pub(crate) async fn commit(
         }
         (recording, file)
     };
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM file_removals \
+            WHERE file_id=? AND status='pending')",
+    )
+    .bind(file)
+    .fetch_one(&mut *tx)
+    .await?;
+    if pending {
+        return Err(DownloadError::Conflict("File removal is pending"));
+    }
     reconcile(&mut tx, &work.target, recording).await?;
     provenance(&mut tx, work, recording, file).await?;
     sqlx::query("DELETE FROM download_imports WHERE job_id=?")

@@ -26,25 +26,32 @@ pub(crate) async fn find(
         .await
 }
 
-/// Read a bounded page in ascending identifier order.
-///
-/// Callers validate the page size and offset before passing them to SQL.
-pub(crate) async fn list(
-    pool: &SqlitePool,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<Artist>, sqlx::Error> {
-    sqlx::query_as("SELECT id, name FROM artists ORDER BY id LIMIT ? OFFSET ?")
+#[cfg(test)]
+pub(crate) mod fixtures {
+    //! Base-table reads used by migration and import fixtures.
+    use super::*;
+
+    /// Read original catalog rows independently of client projections.
+    pub(crate) async fn list(
+        pool: &SqlitePool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Artist>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT id, name FROM artists ORDER BY id LIMIT ? OFFSET ?",
+        )
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     //! Migration-backed persistence, duplicate names, and deterministic pages.
 
+    use super::fixtures::list;
     use super::*;
 
     /// Distinct artists may have identical names and survive reopening.

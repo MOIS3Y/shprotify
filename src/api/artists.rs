@@ -19,10 +19,9 @@ use crate::{
     library::{Artist, ArtistName},
 };
 
-use super::{
-    error::{ApiError, ErrorResponse},
-    pagination::Pagination,
-};
+use crate::library::browse::{ArtistQuery, ArtistSummary};
+
+use super::error::{ApiError, ErrorResponse};
 
 /// Register version-local artist routes with their database state.
 pub(super) fn router(pool: SqlitePool) -> OpenApiRouter {
@@ -44,10 +43,14 @@ struct CreateArtist {
 /// A bounded slice of the catalog with the effective paging parameters.
 #[derive(Serialize, ToSchema)]
 struct ArtistPage {
-    /// Artists ordered by identifier; empty when the offset is past the end.
-    items: Vec<Artist>,
+    /// Artists in the requested order; empty beyond the last page.
+    items: Vec<ArtistSummary>,
     /// Maximum number of returned items.
     limit: i64,
+    /// Total rows matching this filter in the same read snapshot.
+    total: i64,
+    /// Whether another page exists after the returned items.
+    has_more: bool,
     /// Number of skipped artists.
     offset: i64,
 }
@@ -103,7 +106,7 @@ async fn create_artist(
     operation_id = "get_artist",
     params(("id" = i64, Path, minimum = 1, description = "Artist identifier")),
     responses(
-        (status = 200, body = Artist, description = "Artist found"),
+        (status = 200, body = ArtistSummary, description = "Artist found"),
         (status = 400, response = ErrorResponse),
         (status = 404, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
@@ -112,19 +115,19 @@ async fn create_artist(
 async fn get_artist(
     State(pool): State<SqlitePool>,
     id: Result<Path<i64>, PathRejection>,
-) -> Result<Json<Artist>, ApiError> {
+) -> Result<Json<ArtistSummary>, ApiError> {
     let Path(id) =
         id.map_err(|_| ApiError::BadRequest("Invalid artist id"))?;
-    let artist = db::artists::find(&pool, id)
+    let artist = db::browse::artist(&pool, id)
         .await?
         .ok_or(ApiError::NotFound)?;
     Ok(Json(artist))
 }
 
-/// List artists using a bounded page in ascending identifier order.
+/// Browse artist cards with ID/name sorting and snapshot-consistent totals.
 #[utoipa::path(
     get, path = "/artists", tag = "Artists", operation_id = "list_artists",
-    params(Pagination),
+    params(ArtistQuery),
     responses(
         (status = 200, body = ArtistPage, description = "Artist page"),
         (status = 400, response = ErrorResponse),
@@ -133,13 +136,15 @@ async fn get_artist(
 )]
 async fn list_artists(
     State(pool): State<SqlitePool>,
-    query: Result<Query<Pagination>, QueryRejection>,
+    query: Result<Query<ArtistQuery>, QueryRejection>,
 ) -> Result<Json<ArtistPage>, ApiError> {
     let Query(query) = query
         .map_err(|_| ApiError::BadRequest("Invalid pagination parameters"))?;
-    query.validate()?;
-    let items = db::artists::list(&pool, query.limit, query.offset).await?;
+    query.validate().map_err(ApiError::BadRequest)?;
+    let (items, total) = db::browse::artists(&pool, &query).await?;
     Ok(Json(ArtistPage {
+        has_more: query.offset.saturating_add(items.len() as i64) < total,
+        total,
         items,
         limit: query.limit,
         offset: query.offset,
@@ -224,7 +229,7 @@ mod tests {
         let location = headers[header::LOCATION].to_str().unwrap();
         let (status, _, fetched) = request(&app, "GET", location, None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(artist, fetched);
+        crate::api::tests::assert_base(&fetched, &artist);
         pool.close().await;
     }
 
@@ -234,7 +239,11 @@ mod tests {
         let (_directory, pool, app) = setup().await;
         let (_, _, empty) =
             request(&app, "GET", "/api/v1/artists", None).await;
-        assert_eq!(empty, json!({"items": [], "limit": 50, "offset": 0}));
+        assert_eq!(
+            empty,
+            json!({"items": [], "limit": 50, "offset": 0,
+            "total": 0,"has_more":false})
+        );
         let mut ids = Vec::new();
         for name in ["Same", "Same", "Third"] {
             let (status, _, artist) = request(
@@ -254,7 +263,10 @@ mod tests {
         assert_eq!(
             page,
             json!({
-                "items": [{"id": ids[1], "name": "Same"}],
+                "items": [{"id": ids[1], "name": "Same",
+                    "recording_count":0,"release_count":0,
+                    "artwork_url":null}],
+                "total":3,"has_more":true,
                 "limit": 1, "offset": 1,
             })
         );

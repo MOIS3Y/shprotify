@@ -388,6 +388,11 @@ mod tests {
                 discovery,
                 downloads,
                 automation: config(),
+                clients: crate::config::ClientSettings::default(),
+                removals: crate::jobs::removals::RemovalService::new(
+                    pool.clone(),
+                    None,
+                ),
             },
         );
         (app, alice, bob, id)

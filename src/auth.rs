@@ -62,16 +62,46 @@ where
         parts: &mut Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let token = bearer(parts)?;
         Ok(Self(
-            db::users::authenticate(
-                &SqlitePool::from_ref(state),
-                &digest(token),
-            )
-            .await?
-            .ok_or(ApiError::Unauthorized)?,
+            CurrentCredential::from_request_parts(parts, state)
+                .await?
+                .user,
         ))
     }
+}
+
+/// Authenticated parent identity used when issuing narrower media access.
+pub(crate) struct CurrentCredential {
+    /// Current account and role, checked in storage.
+    pub(crate) user: User,
+    /// Persisted digest, never the original secret.
+    pub(crate) digest: String,
+}
+
+impl<S> FromRequestParts<S> for CurrentCredential
+where
+    S: Send + Sync,
+    SqlitePool: FromRef<S>,
+{
+    type Rejection = ApiError;
+
+    /// Authenticate one Bearer header and preserve its parent identity.
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let digest = digest(bearer(parts)?);
+        let user =
+            db::users::authenticate(&SqlitePool::from_ref(state), &digest)
+                .await?
+                .ok_or(ApiError::Unauthorized)?;
+        Ok(Self { user, digest })
+    }
+}
+
+/// Generate a credential accepted exclusively by the audio delivery route.
+pub(crate) fn media_token() -> anyhow::Result<String> {
+    random_token("shm_")
 }
 
 /// Authenticated session digest; personal keys cannot be logged out.

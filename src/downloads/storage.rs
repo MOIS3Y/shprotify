@@ -122,6 +122,66 @@ impl Storage {
         Ok(path)
     }
 
+    /// Remove only unchanged, regular objects inside the private object root.
+    /// Missing bytes are an idempotent success for crash recovery. Every
+    /// component is opened without following symlinks; unlink uses the same
+    /// directory descriptor. The managed root must remain server-exclusive.
+    pub(crate) fn remove(&self, path: &str, digest: &str) -> Result<()> {
+        use rustix::fs::{AtFlags, unlinkat};
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        let path = self.checked_object(path, digest)?;
+        let flags = OFlags::RDONLY
+            | OFlags::DIRECTORY
+            | OFlags::NOFOLLOW
+            | OFlags::CLOEXEC;
+        let mut directory = open("/", flags, Mode::empty())?;
+        for component in
+            self.root.join("objects").strip_prefix("/")?.components()
+        {
+            let Component::Normal(name) = component else {
+                anyhow::bail!("Invalid managed directory");
+            };
+            directory = openat(&directory, name, flags, Mode::empty())?;
+        }
+        let name = path.file_name().context("Missing object name")?;
+        let fd = match openat(
+            &directory,
+            name,
+            OFlags::RDONLY
+                | OFlags::NOFOLLOW
+                | OFlags::CLOEXEC
+                | OFlags::NONBLOCK,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(Errno::NOENT) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        let mut file = File::from(fd);
+        ensure!(file.metadata()?.is_file(), "Object must be a regular file");
+        let mut hash = Sha256::new();
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hash.update(&buffer[..count]);
+        }
+        ensure!(
+            hash.finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+                == digest,
+            "Managed object content changed"
+        );
+        unlinkat(&directory, name, AtFlags::empty())?;
+        File::from(directory).sync_all()?;
+        Ok(())
+    }
+
     /// Publish a verified file without replacing an existing object.
     pub(crate) fn publish(&self, stage: &Path, object: &Path) -> Result<()> {
         let file =

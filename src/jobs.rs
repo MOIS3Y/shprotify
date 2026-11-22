@@ -9,6 +9,7 @@ pub(crate) mod automation;
 pub(crate) mod discovery;
 pub(crate) mod downloads;
 pub(crate) mod metadata;
+pub(crate) mod removals;
 
 use std::{
     path::{Path, PathBuf},

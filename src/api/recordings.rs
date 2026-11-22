@@ -19,16 +19,17 @@ use crate::{
     library::recordings::{NewRecording, Recording},
 };
 
-use super::{
-    error::{ApiError, ErrorResponse},
-    pagination::Pagination,
-};
+use crate::library::browse::{RecordingQuery, RecordingSummary};
+
+use super::error::{ApiError, ErrorResponse};
 
 /// Register version-local recording operations with the shared SQLite pool.
 pub(super) fn router(pool: SqlitePool) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(create_recording, list_recordings))
         .routes(routes!(get_recording))
+        .routes(routes!(artist_recordings))
+        .routes(routes!(batch_recordings))
         .with_state(pool)
 }
 
@@ -45,13 +46,17 @@ struct CreateRecording {
     artist_ids: Vec<i64>,
 }
 
-/// Bounded catalog slice in ascending recording identifier order.
+/// Bounded catalog slice; identifier order is the default.
 #[derive(Serialize, ToSchema)]
 struct RecordingPage {
     /// Recordings with complete ordered credits; empty beyond the last page.
-    items: Vec<Recording>,
+    items: Vec<RecordingSummary>,
     /// Effective maximum number of recordings in this response.
     limit: i64,
+    /// Total rows matching this filter in the same read snapshot.
+    total: i64,
+    /// Whether another page exists after the returned items.
+    has_more: bool,
     /// Number of skipped recordings.
     offset: i64,
 }
@@ -114,7 +119,8 @@ async fn create_recording(
     operation_id = "get_recording",
     params(("id" = i64, Path, minimum = 1, description = "Recording ID")),
     responses(
-        (status = 200, body = Recording, description = "Recording found"),
+        (status = 200, body = RecordingSummary,
+            description = "Recording found"),
         (status = 400, response = ErrorResponse),
         (status = 404, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
@@ -123,21 +129,21 @@ async fn create_recording(
 async fn get_recording(
     State(pool): State<SqlitePool>,
     id: Result<Path<i64>, PathRejection>,
-) -> Result<Json<Recording>, ApiError> {
+) -> Result<Json<RecordingSummary>, ApiError> {
     let Path(id) =
         id.map_err(|_| ApiError::BadRequest("Invalid recording id"))?;
     Ok(Json(
-        db::recordings::find(&pool, id)
+        db::browse::recording(&pool, id)
             .await?
             .ok_or(ApiError::NotFound)?,
     ))
 }
 
-/// List whole recordings, including all credits, in ascending ID order.
+/// Filter recordings with complete display credits and path-free audio data.
 #[utoipa::path(
     get, path = "/recordings", tag = "Recordings",
     operation_id = "list_recordings",
-    params(Pagination),
+    params(RecordingQuery),
     responses(
         (status = 200, body = RecordingPage, description = "Recording page"),
         (status = 400, response = ErrorResponse),
@@ -146,17 +152,127 @@ async fn get_recording(
 )]
 async fn list_recordings(
     State(pool): State<SqlitePool>,
-    query: Result<Query<Pagination>, QueryRejection>,
+    query: Result<Query<RecordingQuery>, QueryRejection>,
 ) -> Result<Json<RecordingPage>, ApiError> {
     let Query(query) = query
         .map_err(|_| ApiError::BadRequest("Invalid pagination parameters"))?;
-    query.validate()?;
-    let items = db::recordings::list(&pool, query.limit, query.offset).await?;
+    query.validate().map_err(ApiError::BadRequest)?;
+    let (items, total) = db::browse::recordings(&pool, &query).await?;
     Ok(Json(RecordingPage {
+        has_more: query.offset.saturating_add(items.len() as i64) < total,
+        total,
         items,
         limit: query.limit,
         offset: query.offset,
     }))
+}
+
+/// Browse this artist's recordings; a conflicting query scope is rejected.
+#[utoipa::path(get, path="/artists/{id}/recordings", tag="Artists",
+    operation_id="artist_recordings",
+    params(("id"=i64,Path,minimum=1),RecordingQuery),
+    responses((status=200,description="Filtered catalog page",
+        body=RecordingPage),
+        (status=400,response=ErrorResponse),
+        (status=401,response=ErrorResponse),
+        (status=404,response=ErrorResponse),
+        (status=500,response=ErrorResponse)))]
+async fn artist_recordings(
+    State(pool): State<SqlitePool>,
+    path: Result<Path<i64>, PathRejection>,
+    query: Result<Query<RecordingQuery>, QueryRejection>,
+) -> Result<Json<RecordingPage>, ApiError> {
+    let Path(id) =
+        path.map_err(|_| ApiError::BadRequest("Invalid parent ID"))?;
+    if id <= 0 {
+        return Err(ApiError::BadRequest("ID must be positive"));
+    }
+    if db::artists::find(&pool, id).await?.is_none() {
+        return Err(ApiError::NotFound);
+    }
+    let Query(mut query) =
+        query.map_err(|_| ApiError::BadRequest("Invalid catalog query"))?;
+    if query.artist_id.is_some_and(|value| value != id) {
+        return Err(ApiError::BadRequest(
+            "Query scope conflicts with parent ID",
+        ));
+    }
+    query.artist_id = Some(id);
+    query.validate().map_err(ApiError::BadRequest)?;
+    let (items, total) = db::browse::recordings(&pool, &query).await?;
+    Ok(Json(RecordingPage {
+        has_more: query.offset.saturating_add(items.len() as i64) < total,
+        items,
+        total,
+        limit: query.limit,
+        offset: query.offset,
+    }))
+}
+
+/// Bounded bulk lookup for queue, history, favorites and playlist rendering.
+#[derive(Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in=Query)]
+struct BatchQuery {
+    /// Comma-separated positive recording IDs, at most 100 distinct values.
+    ids: String,
+}
+
+/// Existing cards keep input order; missing references are explicit.
+#[derive(Serialize, ToSchema)]
+struct RecordingBatch {
+    /// Full display/audio summaries; no request per track is needed.
+    items: Vec<RecordingSummary>,
+    /// Requested IDs absent from the current catalog.
+    missing_ids: Vec<i64>,
+}
+
+/// Resolve one client page of recording IDs in a single request.
+/// Empty `ids` is accepted. Duplicates or more than 100 IDs return 400.
+#[utoipa::path(get,path="/recordings/batch",tag="Recordings",
+    params(BatchQuery),responses(
+        (status=200,body=RecordingBatch,description="Recording cards"),
+        (status=400,response=ErrorResponse),
+        (status=401,response=ErrorResponse),
+        (status=500,response=ErrorResponse)
+    ))]
+async fn batch_recordings(
+    State(pool): State<SqlitePool>,
+    query: Result<Query<BatchQuery>, QueryRejection>,
+) -> Result<Json<RecordingBatch>, ApiError> {
+    let Query(query) = query.map_err(|_| {
+        ApiError::BadRequest("Expected comma-separated recording IDs")
+    })?;
+    if query.ids.len() > 2100 {
+        return Err(ApiError::BadRequest("At most 100 IDs are supported"));
+    }
+    let ids = if query.ids.is_empty() {
+        vec![]
+    } else {
+        query
+            .ids
+            .split(',')
+            .map(str::parse::<i64>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| {
+                ApiError::BadRequest("Expected positive integer IDs")
+            })?
+    };
+    let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+    if ids.len() > 100
+        || unique.len() != ids.len()
+        || ids.iter().any(|id| *id <= 0)
+    {
+        return Err(ApiError::BadRequest(
+            "Use at most 100 distinct positive recording IDs",
+        ));
+    }
+    let items = db::browse::recording_batch(&pool, &ids).await?;
+    let found: std::collections::HashSet<_> =
+        items.iter().map(|r| r.id).collect();
+    let missing_ids =
+        ids.into_iter().filter(|id| !found.contains(id)).collect();
+    Ok(Json(RecordingBatch { items, missing_ids }))
 }
 
 #[cfg(test)]
@@ -251,10 +367,10 @@ mod tests {
         let location = headers[header::LOCATION].to_str().unwrap();
         let (status, _, fetched) = request(&app, "GET", location, None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(fetched, recording);
+        crate::api::tests::assert_base(&fetched, &recording);
         let (_, _, page) =
             request(&app, "GET", "/api/v1/recordings?limit=1", None).await;
-        assert_eq!(page["items"], json!([recording]));
+        assert_eq!(page["items"], json!([fetched]));
         let (_, _, releases) =
             request(&app, "GET", "/api/v1/releases", None).await;
         assert_eq!(releases["items"], json!([]));
@@ -267,7 +383,11 @@ mod tests {
         let (_directory, pool, app) = setup().await;
         let (_, _, empty) =
             request(&app, "GET", "/api/v1/recordings", None).await;
-        assert_eq!(empty, json!({"items": [], "limit": 50, "offset": 0}));
+        assert_eq!(
+            empty,
+            json!({"items": [], "limit": 50, "offset": 0,
+            "total": 0,"has_more":false})
+        );
         let mut recordings = Vec::new();
         for _ in 0..2 {
             let (status, _, recording) = request(
@@ -285,7 +405,8 @@ mod tests {
         let (_, _, page) =
             request(&app, "GET", "/api/v1/recordings?limit=1&offset=1", None)
                 .await;
-        assert_eq!(page["items"], json!([recordings[1]]));
+        crate::api::tests::assert_base(&page["items"][0], &recordings[1]);
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
         let (_, _, end) =
             request(&app, "GET", "/api/v1/recordings?offset=2", None).await;
         assert_eq!(end["items"], json!([]));

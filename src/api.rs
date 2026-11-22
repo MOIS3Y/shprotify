@@ -3,6 +3,7 @@
 mod artists;
 mod audio_files;
 mod automation;
+mod clients;
 mod discovery;
 mod docs;
 mod downloads;
@@ -19,6 +20,7 @@ mod queue;
 mod recordings;
 mod release_tracks;
 mod releases;
+mod removals;
 mod scans;
 mod search;
 mod sessions;
@@ -73,6 +75,11 @@ pub(crate) fn router(
             discovery,
             downloads,
             automation: crate::config::AutomationConfig::default(),
+            clients: crate::config::ClientSettings::default(),
+            removals: crate::jobs::removals::RemovalService::new(
+                pool.clone(),
+                None,
+            ),
         },
     )
 }
@@ -87,6 +94,10 @@ pub(crate) struct Services {
     pub(crate) discovery: crate::jobs::discovery::DiscoveryService,
     /// Acquisition executor and read-only import policy.
     pub(crate) downloads: crate::jobs::downloads::DownloadService,
+    /// Supervised file unregistering and managed-object removal.
+    pub(crate) removals: crate::jobs::removals::RemovalService,
+    /// Catalog privacy, browser origins and media credential policy.
+    pub(crate) clients: crate::config::ClientSettings,
     /// Interval admission defaults and administrator limits.
     pub(crate) automation: crate::config::AutomationConfig,
 }
@@ -105,13 +116,35 @@ pub(crate) fn router_with_services(
         discovery: discovery_service,
         downloads: downloads_service,
         automation: automation_config,
+        clients: client_settings,
+        removals: removal_service,
     } = services;
     let import_policy = downloads_service.import_policy().clone();
     let mut media_roots = scans.roots().as_ref().clone();
     if let Some(root) = downloads_service.media_root() {
         media_roots.push(root);
     }
+    let catalog = OpenApiRouter::new()
+        .merge(artists::router(pool.clone()))
+        .merge(releases::router(pool.clone()))
+        .merge(recordings::router(pool.clone()))
+        .merge(release_tracks::router(pool.clone()))
+        .merge(audio_files::router(pool.clone()))
+        .merge(search::router(pool.clone()))
+        .merge(clients::catalog(pool.clone()));
+    let catalog = clients::protect(
+        catalog,
+        pool.clone(),
+        client_settings.public_catalog,
+    );
     let v1 = OpenApiRouter::new()
+        .merge(clients::router(
+            &client_settings,
+            downloads_service.enabled(),
+            automation_config.enabled,
+        ))
+        .merge(catalog)
+        .merge(removals::router(pool.clone(), removal_service))
         .routes(routes!(health))
         .merge(automation::router(
             pool.clone(),
@@ -120,10 +153,15 @@ pub(crate) fn router_with_services(
         ))
         .merge(downloads::router(pool.clone(), downloads_service))
         .merge(discovery::router(pool.clone(), discovery_service))
-        .merge(metadata::router(pool.clone(), metadata_service))
+        .merge(metadata::router(
+            pool.clone(),
+            metadata_service,
+            client_settings.public_catalog,
+        ))
         .merge(streaming::router(
             pool.clone(),
             std::sync::Arc::new(media_roots),
+            client_settings.ticket_ttl_seconds,
         ))
         .merge(sessions::router(pool.clone(), *auth))
         .merge(personal::router(pool.clone()))
@@ -131,22 +169,20 @@ pub(crate) fn router_with_services(
         .merge(queue::router(pool.clone()))
         .merge(playlists::router(pool.clone()))
         .merge(users::router(pool.clone()))
-        .merge(artists::router(pool.clone()))
-        .merge(releases::router(pool.clone()))
-        .merge(recordings::router(pool.clone()))
-        .merge(release_tracks::router(pool.clone()))
-        .merge(audio_files::router(pool.clone()))
         .merge(duplicates::router(pool.clone()))
-        .merge(search::router(pool.clone()))
         .merge(scans::router(pool.clone(), scans));
-    let (router, schema) =
+    let (router, mut schema) =
         OpenApiRouter::with_openapi(docs::ApiDoc::openapi())
             .nest("/api/v1", v1)
             .split_for_parts();
 
-    docs::attach(router, schema, config)
-        .fallback(not_found)
-        .method_not_allowed_fallback(method_not_allowed)
+    docs::catalog_policy(&mut schema, client_settings.public_catalog);
+    clients::cors(
+        docs::attach(router, schema, config)
+            .fallback(not_found)
+            .method_not_allowed_fallback(method_not_allowed),
+        &client_settings,
+    )
 }
 
 /// Return a JSON 404 for paths that do not match any API route.
@@ -193,6 +229,16 @@ pub(crate) mod tests {
     use tower::ServiceExt;
 
     use super::*;
+
+    /// Compare creation fields while allowing richer client read projections.
+    pub(crate) fn assert_base(
+        actual: &serde_json::Value,
+        expected: &serde_json::Value,
+    ) {
+        for (key, value) in expected.as_object().unwrap() {
+            assert_eq!(&actual[key], value, "{key}");
+        }
+    }
 
     /// Authenticate catalog contract fixtures with a real administrator key.
     /// Authorization-specific tests use the unmodified production router.

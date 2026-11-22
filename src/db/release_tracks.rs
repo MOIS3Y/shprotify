@@ -77,38 +77,41 @@ pub(crate) async fn find(
     .await
 }
 
-/// Read a bounded page by disc and position in one consistent snapshot.
-///
-/// A missing parent returns an error; an existing empty release returns an
-/// empty page. Callers validate pagination before entering this function.
-pub(crate) async fn list(
-    pool: &SqlitePool,
-    release_id: i64,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<ReleaseTrack>, TrackError> {
-    let mut transaction = pool.begin().await?;
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM releases WHERE id = ?)",
-    )
-    .bind(release_id)
-    .fetch_one(&mut *transaction)
-    .await?;
-    if !exists {
-        return Err(TrackError::MissingRelease);
-    }
-    let tracks = sqlx::query_as(
-        "SELECT id, release_id, recording_id, disc_number, position \
+#[cfg(test)]
+pub(crate) mod fixtures {
+    //! Base-table reads used by migration and import fixtures.
+    use super::*;
+
+    /// Read original catalog rows independently of client projections.
+    pub(crate) async fn list(
+        pool: &SqlitePool,
+        release_id: i64,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ReleaseTrack>, TrackError> {
+        let mut transaction = pool.begin().await?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM releases WHERE id = ?)",
+        )
+        .bind(release_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !exists {
+            return Err(TrackError::MissingRelease);
+        }
+        let tracks = sqlx::query_as(
+            "SELECT id, release_id, recording_id, disc_number, position \
          FROM release_tracks WHERE release_id = ? \
          ORDER BY disc_number, position LIMIT ? OFFSET ?",
-    )
-    .bind(release_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&mut *transaction)
-    .await?;
-    transaction.commit().await?;
-    Ok(tracks)
+        )
+        .bind(release_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(tracks)
+    }
 }
 
 #[cfg(test)]
@@ -121,6 +124,7 @@ mod tests {
     };
     use tempfile::TempDir;
 
+    use super::fixtures::list;
     use super::*;
 
     /// Seed independent release and recording identities in an isolated file.

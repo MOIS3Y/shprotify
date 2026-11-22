@@ -56,7 +56,11 @@ fn first_disc() -> i64 {
 #[derive(Serialize, ToSchema)]
 struct TrackPage {
     /// Track occurrences, independent of physical audio files.
-    items: Vec<ReleaseTrack>,
+    items: Vec<crate::db::browse::TrackSummary>,
+    /// Total occurrences in this release, including duplicate recordings.
+    total: i64,
+    /// Whether another page follows this result.
+    has_more: bool,
     /// Maximum returned occurrences.
     limit: i64,
     /// Number of skipped occurrences in tracklist order.
@@ -181,10 +185,22 @@ async fn list_tracks(
     let Query(query) = query
         .map_err(|_| ApiError::BadRequest("Invalid pagination parameters"))?;
     query.validate()?;
-    let items =
-        release_tracks::list(&pool, release_id, query.limit, query.offset)
-            .await?;
+    if crate::db::releases::find(&pool, release_id)
+        .await?
+        .is_none()
+    {
+        return Err(ApiError::NotFound);
+    }
+    let (items, total) = crate::db::browse::tracks(
+        &pool,
+        release_id,
+        query.limit,
+        query.offset,
+    )
+    .await?;
     Ok(Json(TrackPage {
+        has_more: query.offset.saturating_add(items.len() as i64) < total,
+        total,
         items,
         limit: query.limit,
         offset: query.offset,
@@ -326,7 +342,11 @@ mod tests {
         let (_directory, pool, app, release, recording) = setup().await;
         let path = format!("/api/v1/releases/{release}/tracks");
         let (_, _, empty) = request(&app, "GET", &path, None).await;
-        assert_eq!(empty, json!({"items": [], "limit": 50, "offset": 0}));
+        assert_eq!(
+            empty,
+            json!({"items": [], "limit": 50, "offset": 0,
+            "total": 0,"has_more":false})
+        );
         for (disc, position) in [(2, 1), (1, 3), (1, 1)] {
             let (status, _, _) = request(
                 &app,
@@ -395,7 +415,8 @@ mod tests {
             assert_eq!(error["error"]["code"], "not_found");
         }
         let (_, _, page) = request(&app, "GET", &path, None).await;
-        assert_eq!(page["items"], json!([track]));
+        crate::api::tests::assert_base(&page["items"][0], &track);
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
         pool.close().await;
     }
 

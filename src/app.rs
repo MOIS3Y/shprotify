@@ -108,6 +108,14 @@ pub(crate) async fn run() -> Result<()> {
             .context("Managed storage worker failed")??,
         )
     };
+    let removals = crate::jobs::removals::RemovalService::new(
+        database.clone(),
+        storage.clone(),
+    );
+    removals
+        .recover()
+        .await
+        .context("Failed to recover file removals")?;
     let downloads = crate::jobs::downloads::DownloadService::new(
         database.clone(),
         config.downloads.clone(),
@@ -144,11 +152,22 @@ pub(crate) async fn run() -> Result<()> {
         stop_automation.send_replace(true);
     };
     let result = serve_http(
-        &config, &database, &scans, &metadata, &discovery, &downloads,
+        &config,
+        &database,
+        api::Services {
+            scans: scans.clone(),
+            metadata: metadata.clone(),
+            discovery: discovery.clone(),
+            downloads: downloads.clone(),
+            automation: config.automation.clone(),
+            clients: config.client_settings(),
+            removals: removals.clone(),
+        },
         shutdown,
     )
     .await;
     automation.close().await;
+    removals.close().await;
     downloads.close().await;
     discovery.close().await;
     metadata.close().await;
@@ -186,10 +205,7 @@ async fn scan_library(roots: Vec<PathBuf>) -> Result<()> {
 async fn serve_http(
     config: &Config,
     database: &sqlx::SqlitePool,
-    scans: &ScanService,
-    metadata: &crate::jobs::metadata::MetadataService,
-    discovery: &crate::jobs::discovery::DiscoveryService,
-    downloads: &crate::jobs::downloads::DownloadService,
+    services: api::Services,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
     let address = config.http.bind;
@@ -207,13 +223,7 @@ async fn serve_http(
             &config.auth,
             &config.docs,
             database,
-            api::Services {
-                scans: scans.clone(),
-                metadata: metadata.clone(),
-                discovery: discovery.clone(),
-                downloads: downloads.clone(),
-                automation: config.automation.clone(),
-            },
+            services,
         ),
     )
     .with_graceful_shutdown(shutdown)

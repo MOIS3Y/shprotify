@@ -242,7 +242,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(counts, (1, 2, 1));
-        let recordings = db::recordings::list(&pool, 50, 0).await.unwrap();
+        let recordings =
+            db::recordings::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(recordings[0].title, "Curated title");
         let artist = db::artists::find(&pool, recordings[0].artist_ids[0])
             .await
@@ -256,8 +257,20 @@ mod tests {
         let mut other = source("/other/release/track.flac", Some(4));
         other.tags.recording_mbid = Some(id.into());
         db::indexing::store(&pool, job, other).await.unwrap();
-        assert_eq!(db::recordings::list(&pool, 50, 0).await.unwrap().len(), 1);
-        assert_eq!(db::releases::list(&pool, 50, 0).await.unwrap().len(), 2);
+        assert_eq!(
+            db::recordings::fixtures::list(&pool, 50, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            db::releases::fixtures::list(&pool, 50, 0)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
         pool.close().await;
     }
 
@@ -341,7 +354,8 @@ mod tests {
         for file in [first, second, third] {
             db::indexing::store(&pool, job, file).await.unwrap();
         }
-        let releases = db::releases::list(&pool, 50, 0).await.unwrap();
+        let releases =
+            db::releases::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].title, "Album");
         let release = &releases[0];
@@ -350,9 +364,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(album_artist.name, "Album artist");
-        let tracks = db::release_tracks::list(&pool, release.id, 50, 0)
-            .await
-            .unwrap();
+        let tracks =
+            db::release_tracks::fixtures::list(&pool, release.id, 50, 0)
+                .await
+                .unwrap();
         assert_eq!(
             tracks
                 .iter()
@@ -360,11 +375,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(1, 1), (1, 2), (2, 1)]
         );
-        let recordings = db::recordings::list(&pool, 50, 0).await.unwrap();
+        let recordings =
+            db::recordings::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(recordings[0].artist_ids, recordings[2].artist_ids);
         assert_ne!(recordings[0].artist_ids, recordings[1].artist_ids);
         assert_ne!(recordings[0].artist_ids, release.artist_ids);
-        let artists = db::artists::list(&pool, 50, 0).await.unwrap();
+        let artists = db::artists::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(artists.len(), 3);
         pool.close().await;
     }
@@ -391,9 +407,11 @@ mod tests {
         for file in [first, second, third] {
             db::indexing::store(&pool, job, file).await.unwrap();
         }
-        let releases = db::releases::list(&pool, 50, 0).await.unwrap();
+        let releases =
+            db::releases::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(releases.len(), 4);
-        let recordings = db::recordings::list(&pool, 50, 0).await.unwrap();
+        let recordings =
+            db::recordings::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_ne!(recordings[0].artist_ids, recordings[1].artist_ids);
         assert_eq!(recordings[0].artist_ids, recordings[2].artist_ids);
         assert_ne!(recordings[0].artist_ids, [100]);
@@ -418,7 +436,8 @@ mod tests {
         let mut standalone = source("/music/partial/standalone.flac", Some(8));
         standalone.tags.album = None;
         db::indexing::store(&pool, job, standalone).await.unwrap();
-        let releases = db::releases::list(&pool, 50, 0).await.unwrap();
+        let releases =
+            db::releases::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(releases.len(), 1);
         assert!(releases[0].artist_ids.is_empty());
         assert!(matches!(
@@ -426,12 +445,13 @@ mod tests {
             crate::library::releases::ReleaseKind::Other
         ));
         assert!(
-            db::release_tracks::list(&pool, releases[0].id, 50, 0)
+            db::release_tracks::fixtures::list(&pool, releases[0].id, 50, 0)
                 .await
                 .unwrap()
                 .is_empty()
         );
-        let recordings = db::recordings::list(&pool, 50, 0).await.unwrap();
+        let recordings =
+            db::recordings::fixtures::list(&pool, 50, 0).await.unwrap();
         assert!(recordings[0].artist_ids.is_empty());
         assert_eq!(recordings[1].artist_ids.len(), 1);
         pool.close().await;
@@ -471,10 +491,16 @@ mod tests {
         let mut file = source("/music/album/song.flac", Some(1));
         file.tags.album_artist = Some("bad\ncredit".into());
         db::indexing::store(&pool, job, file).await.unwrap();
-        let recordings = db::recordings::list(&pool, 50, 0).await.unwrap();
+        let recordings =
+            db::recordings::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(recordings.len(), 1);
         assert!(recordings[0].artist_ids.is_empty());
-        assert!(db::releases::list(&pool, 50, 0).await.unwrap().is_empty());
+        assert!(
+            db::releases::fixtures::list(&pool, 50, 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         let file = db::audio_files::list(&pool, recordings[0].id, 50, 0)
             .await
             .unwrap()
@@ -575,15 +601,18 @@ mod tests {
         )
         .await
         .unwrap();
-        let releases = db::releases::list(&pool, 50, 0).await.unwrap();
+        let releases =
+            db::releases::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].title, "Curated album");
-        let recordings = db::recordings::list(&pool, 50, 0).await.unwrap();
+        let recordings =
+            db::recordings::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(recordings[0].title, "Curated song");
         assert_eq!(recordings[0].artist_ids, recordings[1].artist_ids);
-        let tracks = db::release_tracks::list(&pool, releases[0].id, 50, 0)
-            .await
-            .unwrap();
+        let tracks =
+            db::release_tracks::fixtures::list(&pool, releases[0].id, 50, 0)
+                .await
+                .unwrap();
         assert_eq!(
             tracks
                 .iter()
@@ -591,7 +620,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(1, 2), (7, 1)]
         );
-        let artists = db::artists::list(&pool, 50, 0).await.unwrap();
+        let artists = db::artists::fixtures::list(&pool, 50, 0).await.unwrap();
         assert_eq!(artists.len(), 2);
         assert!(artists.iter().all(|artist| artist.name == "Curated credit"));
         let job = db::scans::find(&pool, job).await.unwrap().unwrap();

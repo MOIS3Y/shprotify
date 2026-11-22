@@ -259,8 +259,11 @@ async fn schema_documents_every_administrative_operation() {
                 ["/api/v1/artists", "/api/v1/releases", "/api/v1/recordings"]
                     .iter()
                     .any(|prefix| path.starts_with(prefix));
-            if (method != "get" && catalog)
+            if (method != "get"
+                && catalog
+                && !path.ends_with("/playback-ticket"))
                 || path.starts_with("/api/v1/library/scans")
+                || path.starts_with("/api/v1/library/file-removals")
                 || path == "/api/v1/library/duplicates"
                 || path.starts_with("/api/v1/users")
                 || path.starts_with("/api/v1/metadata/")
@@ -273,7 +276,7 @@ async fn schema_documents_every_administrative_operation() {
             }
         }
     }
-    assert_eq!(count, 34);
+    assert_eq!(count, 37);
     assert!(schema["paths"]["/api/v1/artists"]["get"]["security"].is_null());
     assert_eq!(
         schema["components"]["schemas"]["Role"]["enum"],

@@ -676,6 +676,18 @@ pub(crate) async fn relink(
 ) -> Result<(), MetadataError> {
     use crate::library::enrichment::LinkKind;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if matches!(kind, LinkKind::File) {
+        let pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM file_removals \
+                WHERE file_id=? AND status='pending')",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if pending {
+            return Err(MetadataError::Conflict);
+        }
+    }
     let old: Option<i64> = sqlx::query_scalar(match kind {
         LinkKind::File => "SELECT recording_id FROM audio_files WHERE id=?",
         LinkKind::ReleaseTrack => {

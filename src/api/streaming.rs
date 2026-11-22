@@ -7,10 +7,17 @@ use std::{
 };
 
 use super::error::{ApiError, ErrorResponse};
-use crate::{audio, auth::CurrentUser, db};
+use crate::{
+    audio,
+    auth::{CurrentCredential, CurrentUser},
+    db,
+};
 use axum::{
     body::Body,
-    extract::{FromRef, Path, State, rejection::PathRejection},
+    extract::{
+        FromRef, FromRequestParts, Path, Query, State,
+        rejection::PathRejection,
+    },
     http::{HeaderMap, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -23,10 +30,16 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 pub(super) fn router(
     pool: SqlitePool,
     roots: Arc<Vec<PathBuf>>,
+    ticket_ttl: u32,
 ) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(stream_audio))
-        .with_state(StreamState { pool, roots })
+        .routes(routes!(issue_ticket))
+        .with_state(StreamState {
+            pool,
+            roots,
+            ticket_ttl,
+        })
 }
 
 /// Shared storage and configured filesystem boundaries for media access.
@@ -36,6 +49,8 @@ struct StreamState {
     pool: SqlitePool,
     /// Canonical collection roots prepared before serving HTTP.
     roots: Arc<Vec<PathBuf>>,
+    /// Maximum lifetime, additionally limited by parent session expiry.
+    ticket_ttl: u32,
 }
 
 impl FromRef<StreamState> for SqlitePool {
@@ -69,10 +84,13 @@ impl utoipa::ToSchema for AudioBytes {}
 /// If-Range falls back to the full response; validators are not issued yet.
 #[utoipa::path(get,
     path = "/recordings/{id}/files/{file_id}/stream", tag = "Playback",
-    operation_id = "stream_audio_file", security(("personal_key" = [])),
+    operation_id = "stream_audio_file",
+    security(("personal_key" = []), ("media_ticket" = [])),
     params(
         ("id" = i64, Path, minimum = 1, description = "Recording ID"),
         ("file_id" = i64, Path, minimum = 1, description = "Audio file ID"),
+        ("ticket" = Option<String>, Query,
+            description = "Scoped short-lived media credential"),
         ("Range" = Option<String>, Header,
             description = "Single byte range: bytes=0-1023 or bytes=-512"),
         ("If-Range" = Option<String>, Header,
@@ -101,7 +119,7 @@ impl utoipa::ToSchema for AudioBytes {}
         (status = 500, response = ErrorResponse)
     ))]
 async fn stream_audio(
-    _user: CurrentUser,
+    access: MediaAccess,
     State(state): State<StreamState>,
     ids: Result<Path<(i64, i64)>, PathRejection>,
     method: Method,
@@ -111,6 +129,12 @@ async fn stream_audio(
         ids.map_err(|_| ApiError::BadRequest("Invalid recording or file ID"))?;
     if recording_id <= 0 || file_id <= 0 {
         return Err(ApiError::BadRequest("Identifiers must be positive"));
+    }
+    if access
+        .0
+        .is_some_and(|scope| scope != (recording_id, file_id))
+    {
+        return Err(ApiError::Unauthorized);
     }
     let metadata = db::audio_files::find(&state.pool, recording_id, file_id)
         .await?
@@ -268,6 +292,104 @@ fn range_error(size: u64) -> Result<Response, ApiError> {
         axum::http::HeaderValue::from_static("bytes"),
     );
     Ok(response)
+}
+
+/// Strict media query; API bearer credentials are never accepted in URLs.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TicketQuery {
+    /// Reusable until expiry; restricted to this recording and file.
+    ticket: Option<String>,
+}
+
+/// Full bearer access or the precise file scope granted by a media ticket.
+struct MediaAccess(Option<(i64, i64)>);
+
+impl FromRequestParts<StreamState> for MediaAccess {
+    type Rejection = ApiError;
+
+    /// An explicit Authorization header takes precedence over query tickets.
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &StreamState,
+    ) -> Result<Self, Self::Rejection> {
+        if parts.headers.contains_key(header::AUTHORIZATION) {
+            CurrentUser::from_request_parts(parts, state).await?;
+            return Ok(Self(None));
+        }
+        let Query(query) = Query::<TicketQuery>::try_from_uri(&parts.uri)
+            .map_err(|_| ApiError::Unauthorized)?;
+        let token = query.ticket.ok_or(ApiError::Unauthorized)?;
+        if token.len() != 68
+            || !token.starts_with("shm_")
+            || !token[4..].bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(ApiError::Unauthorized);
+        }
+        let scope =
+            db::media::redeem(&state.pool, &crate::auth::digest(&token))
+                .await?
+                .ok_or(ApiError::Unauthorized)?;
+        Ok(Self(Some(scope)))
+    }
+}
+
+/// Short-lived relative URL for browser audio elements without bearer headers.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct PlaybackTicket {
+    /// Send only to the originating server; renew by POST when expired.
+    stream_url: String,
+    /// Absolute Unix timestamp; seeking after expiry needs a renewed URL.
+    expires_at: i64,
+}
+
+/// Issue file-scoped access; logout, key revocation and reassignment revoke
+/// it.
+/// Links contain a secret: clients/proxies must avoid logging query strings.
+/// At most 100 unexpired tickets may exist per user; reuse valid links.
+#[utoipa::path(post,
+    path="/recordings/{id}/files/{file_id}/playback-ticket",tag="Playback",
+    security(("personal_key"=[])),params(
+        ("id"=i64,Path,minimum=1),("file_id"=i64,Path,minimum=1)),
+    responses(
+        (status=200,body=PlaybackTicket,description="Scoped audio link"),
+        (status=400,response=ErrorResponse),
+        (status=401,response=ErrorResponse),
+        (status=404,response=ErrorResponse),
+        (status=409,response=ErrorResponse),
+        (status=500,response=ErrorResponse)
+    ))]
+async fn issue_ticket(
+    credential: CurrentCredential,
+    State(state): State<StreamState>,
+    ids: Result<Path<(i64, i64)>, PathRejection>,
+) -> Result<Response, ApiError> {
+    let Path((recording, file)) =
+        ids.map_err(|_| ApiError::BadRequest("Invalid recording or file ID"))?;
+    if recording <= 0 || file <= 0 {
+        return Err(ApiError::BadRequest("Identifiers must be positive"));
+    }
+    db::audio_files::find(&state.pool, recording, file)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let token = crate::auth::media_token()?;
+    let expires_at = db::media::issue(
+        &state.pool,
+        &credential.digest,
+        credential.user.id,
+        recording,
+        file,
+        &crate::auth::digest(&token),
+        state.ticket_ttl,
+    )
+    .await?
+    .ok_or(ApiError::Conflict(
+        "Media ticket limit reached or credential/file changed",
+    ))?;
+    Ok(([(header::CACHE_CONTROL,"private, no-store")],axum::Json(
+        PlaybackTicket {stream_url:format!(
+            "/api/v1/recordings/{recording}/files/{file}/stream?ticket={token}"
+        ),expires_at})).into_response())
 }
 
 #[cfg(test)]

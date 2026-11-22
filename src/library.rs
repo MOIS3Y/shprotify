@@ -2,6 +2,7 @@
 
 pub(crate) mod artwork;
 pub(crate) mod audio_files;
+pub(crate) mod browse;
 pub(crate) mod directories;
 pub(crate) mod enrichment;
 pub(crate) mod file_state;
@@ -44,7 +45,9 @@ fn validate_artist_ids(artist_ids: &[i64]) -> Result<(), &'static str> {
 }
 
 /// An artist or group in the shared catalog; names need not be unique.
-#[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
+#[derive(
+    Debug, Clone, serde::Deserialize, Serialize, sqlx::FromRow, ToSchema,
+)]
 pub(crate) struct Artist {
     /// Stable, positive identifier assigned by SQLite.
     #[schema(minimum = 1, example = 1)]

@@ -73,7 +73,9 @@ pub(crate) async fn find(
     sqlx::query_as(
         "SELECT id, recording_id, path, format, size_bytes, duration_ms, \
                 sample_rate_hz, channels, bit_depth, bitrate_bps \
-         FROM audio_files WHERE recording_id = ? AND id = ?",
+         FROM audio_files WHERE recording_id = ? AND id = ? \
+         AND NOT EXISTS(SELECT 1 FROM file_removals d \
+             WHERE d.file_id=audio_files.id AND d.status='pending')",
     )
     .bind(recording_id)
     .bind(file_id)
@@ -104,7 +106,10 @@ pub(crate) async fn list(
     let files = sqlx::query_as(
         "SELECT id, recording_id, path, format, size_bytes, duration_ms, \
                 sample_rate_hz, channels, bit_depth, bitrate_bps \
-         FROM audio_files WHERE recording_id = ? ORDER BY id LIMIT ? OFFSET ?",
+         FROM audio_files WHERE recording_id = ? \
+         AND NOT EXISTS(SELECT 1 FROM file_removals d \
+             WHERE d.file_id=audio_files.id AND d.status='pending') \
+         ORDER BY id LIMIT ? OFFSET ?",
     )
     .bind(recording_id)
     .bind(limit)

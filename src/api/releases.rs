@@ -19,16 +19,17 @@ use crate::{
     library::releases::{NewRelease, Release, ReleaseKind},
 };
 
-use super::{
-    error::{ApiError, ErrorResponse},
-    pagination::Pagination,
-};
+use crate::library::browse::{ReleaseQuery, ReleaseSummary};
+
+use super::error::{ApiError, ErrorResponse};
 
 /// Register version-local release operations with the shared SQLite pool.
 pub(super) fn router(pool: SqlitePool) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(create_release, list_releases))
         .routes(routes!(get_release))
+        .routes(routes!(recording_releases))
+        .routes(routes!(artist_releases))
         .with_state(pool)
 }
 
@@ -51,9 +52,13 @@ struct CreateRelease {
 #[derive(Serialize, ToSchema)]
 struct ReleasePage {
     /// Releases with complete ordered credits; empty beyond the last page.
-    items: Vec<Release>,
+    items: Vec<ReleaseSummary>,
     /// Effective maximum number of releases in this response.
     limit: i64,
+    /// Total rows matching this filter in the same read snapshot.
+    total: i64,
+    /// Whether another page exists after the returned items.
+    has_more: bool,
     /// Number of skipped releases.
     offset: i64,
 }
@@ -113,7 +118,7 @@ async fn create_release(
     operation_id = "get_release",
     params(("id" = i64, Path, minimum = 1, description = "Release ID")),
     responses(
-        (status = 200, body = Release, description = "Release found"),
+        (status = 200, body = ReleaseSummary, description = "Release found"),
         (status = 400, response = ErrorResponse),
         (status = 404, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
@@ -122,11 +127,11 @@ async fn create_release(
 async fn get_release(
     State(pool): State<SqlitePool>,
     id: Result<Path<i64>, PathRejection>,
-) -> Result<Json<Release>, ApiError> {
+) -> Result<Json<ReleaseSummary>, ApiError> {
     let Path(id) =
         id.map_err(|_| ApiError::BadRequest("Invalid release id"))?;
     Ok(Json(
-        db::releases::find(&pool, id)
+        db::browse::release(&pool, id)
             .await?
             .ok_or(ApiError::NotFound)?,
     ))
@@ -135,7 +140,7 @@ async fn get_release(
 /// List whole releases, including all credits, in ascending ID order.
 #[utoipa::path(
     get, path = "/releases", tag = "Releases", operation_id = "list_releases",
-    params(Pagination),
+    params(ReleaseQuery),
     responses(
         (status = 200, body = ReleasePage, description = "Release page"),
         (status = 400, response = ErrorResponse),
@@ -144,14 +149,100 @@ async fn get_release(
 )]
 async fn list_releases(
     State(pool): State<SqlitePool>,
-    query: Result<Query<Pagination>, QueryRejection>,
+    query: Result<Query<ReleaseQuery>, QueryRejection>,
 ) -> Result<Json<ReleasePage>, ApiError> {
     let Query(query) = query
         .map_err(|_| ApiError::BadRequest("Invalid pagination parameters"))?;
-    query.validate()?;
-    let items = db::releases::list(&pool, query.limit, query.offset).await?;
+    query.validate().map_err(ApiError::BadRequest)?;
+    let (items, total) = db::browse::releases(&pool, &query).await?;
     Ok(Json(ReleasePage {
+        has_more: query.offset.saturating_add(items.len() as i64) < total,
+        total,
         items,
+        limit: query.limit,
+        offset: query.offset,
+    }))
+}
+
+/// Browse this artist's releases; a conflicting query scope is rejected.
+#[utoipa::path(get, path="/artists/{id}/releases", tag="Artists",
+    operation_id="artist_releases",
+    params(("id"=i64,Path,minimum=1),ReleaseQuery),
+    responses((status=200,description="Filtered catalog page",
+        body=ReleasePage),
+        (status=400,response=ErrorResponse),
+        (status=401,response=ErrorResponse),
+        (status=404,response=ErrorResponse),
+        (status=500,response=ErrorResponse)))]
+async fn artist_releases(
+    State(pool): State<SqlitePool>,
+    path: Result<Path<i64>, PathRejection>,
+    query: Result<Query<ReleaseQuery>, QueryRejection>,
+) -> Result<Json<ReleasePage>, ApiError> {
+    let Path(id) =
+        path.map_err(|_| ApiError::BadRequest("Invalid parent ID"))?;
+    if id <= 0 {
+        return Err(ApiError::BadRequest("ID must be positive"));
+    }
+    if db::artists::find(&pool, id).await?.is_none() {
+        return Err(ApiError::NotFound);
+    }
+    let Query(mut query) =
+        query.map_err(|_| ApiError::BadRequest("Invalid catalog query"))?;
+    if query.artist_id.is_some_and(|value| value != id) {
+        return Err(ApiError::BadRequest(
+            "Query scope conflicts with parent ID",
+        ));
+    }
+    query.artist_id = Some(id);
+    query.validate().map_err(ApiError::BadRequest)?;
+    let (items, total) = db::browse::releases(&pool, &query).await?;
+    Ok(Json(ReleasePage {
+        has_more: query.offset.saturating_add(items.len() as i64) < total,
+        items,
+        total,
+        limit: query.limit,
+        offset: query.offset,
+    }))
+}
+
+/// Browse this recording's releases; a conflicting query scope is rejected.
+#[utoipa::path(get, path="/recordings/{id}/releases", tag="Recordings",
+    operation_id="recording_releases",
+    params(("id"=i64,Path,minimum=1),ReleaseQuery),
+    responses((status=200,description="Filtered catalog page",
+        body=ReleasePage),
+        (status=400,response=ErrorResponse),
+        (status=401,response=ErrorResponse),
+        (status=404,response=ErrorResponse),
+        (status=500,response=ErrorResponse)))]
+async fn recording_releases(
+    State(pool): State<SqlitePool>,
+    path: Result<Path<i64>, PathRejection>,
+    query: Result<Query<ReleaseQuery>, QueryRejection>,
+) -> Result<Json<ReleasePage>, ApiError> {
+    let Path(id) =
+        path.map_err(|_| ApiError::BadRequest("Invalid parent ID"))?;
+    if id <= 0 {
+        return Err(ApiError::BadRequest("ID must be positive"));
+    }
+    if db::recordings::find(&pool, id).await?.is_none() {
+        return Err(ApiError::NotFound);
+    }
+    let Query(mut query) =
+        query.map_err(|_| ApiError::BadRequest("Invalid catalog query"))?;
+    if query.recording_id.is_some_and(|value| value != id) {
+        return Err(ApiError::BadRequest(
+            "Query scope conflicts with parent ID",
+        ));
+    }
+    query.recording_id = Some(id);
+    query.validate().map_err(ApiError::BadRequest)?;
+    let (items, total) = db::browse::releases(&pool, &query).await?;
+    Ok(Json(ReleasePage {
+        has_more: query.offset.saturating_add(items.len() as i64) < total,
+        items,
+        total,
         limit: query.limit,
         offset: query.offset,
     }))
@@ -250,11 +341,15 @@ mod tests {
         let location = headers[header::LOCATION].to_str().unwrap();
         let (status, _, fetched) = request(&app, "GET", location, None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(fetched, release);
+        crate::api::tests::assert_base(&fetched, &release);
         let (_, _, page) =
             request(&app, "GET", "/api/v1/releases?limit=1&offset=0", None)
                 .await;
-        assert_eq!(page, json!({"items": [release], "limit": 1, "offset": 0}));
+        assert_eq!(
+            page,
+            json!({"items": [fetched], "limit": 1, "offset": 0,
+            "total":1,"has_more":false})
+        );
         pool.close().await;
     }
 
@@ -264,7 +359,11 @@ mod tests {
         let (_directory, pool, app) = setup().await;
         let (_, _, page) =
             request(&app, "GET", "/api/v1/releases", None).await;
-        assert_eq!(page, json!({"items": [], "limit": 50, "offset": 0}));
+        assert_eq!(
+            page,
+            json!({"items": [], "limit": 50, "offset": 0,
+            "total": 0,"has_more":false})
+        );
         for kind in ["album", "single", "ep", "compilation", "other"] {
             let (status, _, release) = request(
                 &app,

@@ -107,27 +107,30 @@ pub(crate) async fn find(
     Ok(collect_releases(rows).into_iter().next())
 }
 
-/// Page releases before joining credits so the limit counts whole releases.
-///
-/// Callers validate paging bounds. Ordering is by release ID, then credit
-/// position, and each read observes one SQLite statement snapshot.
-pub(crate) async fn list(
-    pool: &SqlitePool,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<Release>, sqlx::Error> {
-    let rows = sqlx::query_as(
-        "WITH page AS (SELECT id, title, kind FROM releases \
+#[cfg(test)]
+pub(crate) mod fixtures {
+    //! Base-table reads used by migration and import fixtures.
+    use super::*;
+
+    /// Read original catalog rows independently of client projections.
+    pub(crate) async fn list(
+        pool: &SqlitePool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Release>, sqlx::Error> {
+        let rows = sqlx::query_as(
+            "WITH page AS (SELECT id, title, kind FROM releases \
              ORDER BY id LIMIT ? OFFSET ?) \
          SELECT p.id, p.title, p.kind, a.artist_id FROM page p \
          LEFT JOIN release_artists a ON a.release_id = p.id \
          ORDER BY p.id, a.position",
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
-    Ok(collect_releases(rows))
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+        Ok(collect_releases(rows))
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +139,7 @@ mod tests {
 
     use crate::library::ArtistName;
 
+    use super::fixtures::list;
     use super::*;
 
     /// Create a catalog artist for a foreign-key-backed release credit.

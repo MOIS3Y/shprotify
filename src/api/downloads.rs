@@ -394,6 +394,11 @@ mod tests {
                 discovery,
                 downloads: f.service.clone(),
                 automation: crate::config::AutomationConfig::default(),
+                clients: crate::config::ClientSettings::default(),
+                removals: crate::jobs::removals::RemovalService::new(
+                    f.pool.clone(),
+                    None,
+                ),
             },
         );
         (app, alice, bob)

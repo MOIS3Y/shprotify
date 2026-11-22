@@ -104,6 +104,60 @@ pub(crate) async fn favorites(
     .await
 }
 
+/// Internal left-join projection distinguishes absent and neutral recordings.
+#[derive(sqlx::FromRow)]
+struct BatchRow {
+    /// Position-independent requested identity.
+    requested_id: i64,
+    /// Null when the requested recording was removed.
+    existing_id: Option<i64>,
+    /// Current account's assessment only.
+    reaction: Option<Reaction>,
+    /// Null for neutral preferences.
+    changed_at: Option<String>,
+}
+
+/// Read up to one page of reactions in input order, retaining missing IDs.
+/// Callers reject duplicates/nonpositive IDs and cap the input at 100.
+pub(crate) async fn batch(
+    pool: &SqlitePool,
+    user: i64,
+    ids: &[i64],
+) -> Result<(Vec<ReactionState>, Vec<i64>), sqlx::Error> {
+    let rows: Vec<BatchRow> = sqlx::query_as(
+        "SELECT w.value requested_id,r.id existing_id, \
+            p.reaction,p.changed_at FROM json_each(?) w \
+        LEFT JOIN recordings r ON r.id=w.value \
+        LEFT JOIN recording_reactions p \
+            ON p.recording_id=r.id AND p.user_id=? \
+        ORDER BY CAST(w.key AS INTEGER)",
+    )
+    .bind(sqlx::types::Json(ids))
+    .bind(user)
+    .fetch_all(pool)
+    .await?;
+    let mut items = Vec::new();
+    let mut missing = Vec::new();
+    for BatchRow {
+        requested_id: id,
+        existing_id: existing,
+        reaction,
+        changed_at,
+    } in rows
+    {
+        if existing.is_some() {
+            items.push(ReactionState {
+                recording_id: id,
+                reaction,
+                changed_at,
+            });
+        } else {
+            missing.push(id);
+        }
+    }
+    Ok((items, missing))
+}
+
 #[cfg(test)]
 mod tests {
     //! Chronology, idempotence, and concurrent preference changes.

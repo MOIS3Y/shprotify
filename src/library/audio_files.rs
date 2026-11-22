@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// Optional measured properties; unknown values remain null rather than zero.
-#[derive(Debug, Default, Deserialize, Serialize, sqlx::FromRow, ToSchema)]
+#[derive(
+    Debug, Clone, Default, Deserialize, Serialize, sqlx::FromRow, ToSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AudioProperties {
     /// File size in bytes, when known.

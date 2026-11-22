@@ -7,6 +7,7 @@
 pub(crate) mod artists;
 pub(crate) mod audio_files;
 pub(crate) mod automation;
+pub(crate) mod browse;
 pub(crate) mod discovery;
 pub(crate) mod download_import;
 pub(crate) mod downloads;
@@ -14,6 +15,7 @@ pub(crate) mod duplicates;
 pub(crate) mod history;
 pub(crate) mod indexing;
 mod matching;
+pub(crate) mod media;
 pub(crate) mod metadata;
 pub(crate) mod playlists;
 pub(crate) mod queue;
@@ -22,6 +24,7 @@ mod recording_matches;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
+pub(crate) mod removals;
 pub(crate) mod scans;
 pub(crate) mod search;
 pub(crate) mod sessions;
@@ -825,7 +828,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=22).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=23).collect::<Vec<_>>());
         pool.close().await;
     }
 
@@ -907,7 +910,12 @@ mod tests {
                 .artist_ids
                 .is_empty()
         );
-        assert!(releases::list(&pool, 50, 0).await.unwrap().is_empty());
+        assert!(
+            releases::fixtures::list(&pool, 50, 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         pool.close().await;
     }
 
@@ -1053,7 +1061,12 @@ mod tests {
             releases::find(&pool, release.id).await.unwrap().unwrap();
         assert_eq!(fetched.title, release.title);
         assert_eq!(fetched.artist_ids, [artist.id]);
-        assert!(recordings::list(&pool, 50, 0).await.unwrap().is_empty());
+        assert!(
+            recordings::fixtures::list(&pool, 50, 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         pool.close().await;
     }
 
@@ -1110,7 +1123,7 @@ mod tests {
             "Existing"
         );
         assert!(
-            release_tracks::list(&pool, release.id, 50, 0)
+            release_tracks::fixtures::list(&pool, release.id, 50, 0)
                 .await
                 .unwrap()
                 .is_empty()

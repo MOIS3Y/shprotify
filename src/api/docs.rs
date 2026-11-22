@@ -24,7 +24,8 @@ All API operations are served under `/api/v1`.
 Sections follow the client workflow: sign in, browse the catalog, play music,
 manage personal collections, discover music and acquire selected tracks.
 Sections prefixed `Admin:` require the administrator role. Catalog reads,
-search and artwork are currently public; playback and personal data require
+search and artwork follow `library.public_catalog`.
+Playback and personal data require
 an active Bearer credential. Each operation documents its own permissions.
 
 Library scans and shared catalog maintenance are under `Admin: Library`
@@ -65,7 +66,7 @@ HEAD responses have no body, including error responses."
         (name = "Audio files", description =
             "Registered formats, measured properties and source tags."),
         (name = "Artwork", description =
-            "Catalog covers and cache validators. Currently public."),
+            "Catalog covers and cache validators; catalog policy applies."),
         (name = "Playback", description =
             "Authenticated audio delivery and byte-range seeking."),
         (name = "Queue", description =
@@ -106,12 +107,56 @@ struct PersonalSecurity;
 impl utoipa::Modify for PersonalSecurity {
     /// Register bearer credentials without imposing security on public routes.
     fn modify(&self, api: &mut openapi::OpenApi) {
-        use openapi::security::{Http, HttpAuthScheme, SecurityScheme};
+        use openapi::security::{
+            ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme,
+        };
         if let Some(components) = &mut api.components {
+            components.add_security_scheme(
+                "media_ticket",
+                SecurityScheme::ApiKey(ApiKey::Query(ApiKeyValue::new(
+                    "ticket",
+                ))),
+            );
             components.add_security_scheme(
                 "personal_key",
                 SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
             );
+        }
+    }
+}
+
+/// Document the actual startup policy for every catalog read section.
+/// Media and administrator operations keep their independent security rules.
+pub(super) fn catalog_policy(api: &mut openapi::OpenApi, public: bool) {
+    const CATALOG: [&str; 6] = [
+        "Search",
+        "Artists",
+        "Releases",
+        "Recordings",
+        "Audio files",
+        "Artwork",
+    ];
+    for path in api.paths.paths.values_mut() {
+        for operation in [&mut path.get, &mut path.head].into_iter().flatten()
+        {
+            let catalog = operation.tags.as_ref().is_some_and(|tags| {
+                tags.iter().any(|tag| CATALOG.contains(&tag.as_str()))
+            });
+            if !catalog {
+                continue;
+            }
+            operation.responses.responses.insert(
+                "401".into(),
+                openapi::Ref::new("#/components/responses/ErrorResponse")
+                    .into(),
+            );
+            if !public {
+                operation.security =
+                    Some(vec![openapi::security::SecurityRequirement::new(
+                        "personal_key",
+                        std::iter::empty::<String>(),
+                    )]);
+            }
         }
     }
 }
@@ -259,7 +304,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 74);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 84);
         assert!(schema["paths"].get("/health").is_none());
     }
 
@@ -396,7 +441,7 @@ mod tests {
         }
         let list = &paths["/api/v1/releases"]["get"];
         assert_eq!(list["operationId"], "list_releases");
-        assert_eq!(list["parameters"].as_array().unwrap().len(), 2);
+        assert_eq!(list["parameters"].as_array().unwrap().len(), 8);
         let detail = &paths["/api/v1/releases/{id}"]["get"];
         assert_eq!(detail["operationId"], "get_release");
         assert!(detail["responses"]["404"].is_object());
@@ -436,7 +481,7 @@ mod tests {
         }
         let list = &paths["/api/v1/recordings"]["get"];
         assert_eq!(list["operationId"], "list_recordings");
-        assert_eq!(list["parameters"].as_array().unwrap().len(), 2);
+        assert_eq!(list["parameters"].as_array().unwrap().len(), 7);
         let detail = &paths["/api/v1/recordings/{id}"]["get"];
         assert_eq!(detail["operationId"], "get_recording");
         assert!(detail["responses"]["404"].is_object());

@@ -5,7 +5,9 @@
 //! Relative database paths are resolved against the working directory.
 
 pub(crate) mod automation;
+pub(crate) mod clients;
 pub(crate) use automation::AutomationConfig;
+pub(crate) use clients::{ClientSettings, PlaybackConfig};
 
 use std::{
     fs,
@@ -24,6 +26,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Scoped browser/media credentials.
+    pub(crate) playback: PlaybackConfig,
     /// Opt-in recurring work and interval policy.
     pub(crate) automation: AutomationConfig,
     /// Experimental audio acquisition and managed storage.
@@ -229,12 +233,24 @@ impl Default for AuthConfig {
 }
 
 /// External music directories; an empty list keeps catalog-only use possible.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LibraryConfig {
+    /// Allow unauthenticated catalog/search/artwork reads; default true.
+    pub(crate) public_catalog: bool,
     /// Existing readable directories, relative to the working directory or
     /// absolute. Startup resolves aliases and rejects overlapping roots.
     pub(crate) directories: Vec<PathBuf>,
+}
+
+impl Default for LibraryConfig {
+    /// Preserve the initial catalog-read policy, with no directories attached.
+    fn default() -> Self {
+        Self {
+            public_catalog: true,
+            directories: vec![],
+        }
+    }
 }
 
 /// Documentation routes enabled at startup; disabled by default.
@@ -249,6 +265,8 @@ pub(crate) struct DocsConfig {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct HttpConfig {
+    /// Explicit HTTP(S) origins allowed to call the API from a browser.
+    pub(crate) cors_origins: Vec<String>,
     /// Numeric IPv4 or IPv6 socket address, including the port.
     pub(crate) bind: SocketAddr,
 }
@@ -258,6 +276,7 @@ impl Default for HttpConfig {
     fn default() -> Self {
         Self {
             bind: SocketAddr::from(([127, 0, 0, 1], 3000)),
+            cors_origins: vec![],
         }
     }
 }
@@ -318,6 +337,15 @@ pub(crate) enum LogFormat {
 }
 
 impl Config {
+    /// Project only nonsecret client-access settings into HTTP services.
+    pub(crate) fn client_settings(&self) -> ClientSettings {
+        ClientSettings {
+            public_catalog: self.library.public_catalog,
+            cors_origins: self.http.cors_origins.clone(),
+            ticket_ttl_seconds: self.playback.ticket_ttl_seconds,
+        }
+    }
+
     /// Load an optional explicit file and apply environment overrides.
     ///
     /// An explicit unreadable file is always an error. No file is searched
@@ -416,6 +444,30 @@ impl Config {
                     .contains(&config.discovery.refresh_interval_seconds),
             "Invalid discovery cache TTL or refresh interval"
         );
+        ensure!(
+            (1..=3600).contains(&config.playback.ticket_ttl_seconds),
+            "Invalid playback.ticket_ttl_seconds"
+        );
+        ensure!(
+            config.http.cors_origins.len() <= 32,
+            "At most 32 CORS origins are supported"
+        );
+        for origin in &config.http.cors_origins {
+            let uri: reqwest::Url =
+                origin.parse().context("Invalid CORS origin")?;
+            ensure!(
+                matches!(uri.scheme(), "http" | "https")
+                    && uri.host_str().is_some()
+                    && uri.username().is_empty()
+                    && uri.password().is_none()
+                    && uri.query().is_none()
+                    && uri.fragment().is_none()
+                    && uri.path() == "/"
+                    && origin.parse::<axum::http::HeaderValue>().is_ok()
+                    && uri.origin().ascii_serialization() == *origin,
+                "CORS origins must be exact HTTP(S) origins without a path"
+            );
+        }
         config.automation.validate()?;
         config.downloads.validate()?;
         Ok(config)
@@ -431,6 +483,46 @@ mod tests {
     /// Load inline TOML over defaults without reading the process environment.
     fn from_toml(contents: &str) -> Result<Config> {
         Config::extract(Config::sources(None)?.merge(Toml::string(contents)))
+    }
+
+    /// Browser origins are exact canonical origins; media lifetimes are
+    /// bounded.
+    #[test]
+    fn validates_client_access_policy() {
+        let defaults = from_toml("").unwrap();
+        assert!(defaults.library.public_catalog);
+        assert!(defaults.http.cors_origins.is_empty());
+        assert_eq!(defaults.playback.ticket_ttl_seconds, 300);
+        let config = from_toml(
+            "[http]\ncors_origins=['http://localhost:5173']\n\
+            [library]\npublic_catalog=false\n\
+            [playback]\nticket_ttl_seconds=1",
+        )
+        .unwrap();
+        assert!(!config.client_settings().public_catalog);
+        for origin in [
+            "*",
+            "null",
+            "file:///music",
+            "https://site/",
+            "https://site/path",
+            "https://site/.",
+            "https://site?secret=1",
+            "https://user:secret@site",
+            "https://site#fragment",
+        ] {
+            assert!(
+                from_toml(&format!("[http]\ncors_origins=['{origin}']"))
+                    .is_err(),
+                "{origin}"
+            );
+        }
+        for ttl in [0, 3601] {
+            assert!(
+                from_toml(&format!("[playback]\nticket_ttl_seconds={ttl}"))
+                    .is_err()
+            );
+        }
     }
 
     /// Download defaults are inert; enabled acquisition requires bounded

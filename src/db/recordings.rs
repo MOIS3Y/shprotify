@@ -102,27 +102,30 @@ pub(crate) async fn find(
     Ok(collect_recordings(rows).into_iter().next())
 }
 
-/// Page recordings before joining credits so limits count whole recordings.
-///
-/// Callers validate paging bounds. Ordering is by recording ID, then credit
-/// position, and each read observes one SQLite statement snapshot.
-pub(crate) async fn list(
-    pool: &SqlitePool,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<Recording>, sqlx::Error> {
-    let rows = sqlx::query_as(
-        "WITH page AS (SELECT id, title FROM recordings \
+#[cfg(test)]
+pub(crate) mod fixtures {
+    //! Base-table reads used by migration and import fixtures.
+    use super::*;
+
+    /// Read original catalog rows independently of client projections.
+    pub(crate) async fn list(
+        pool: &SqlitePool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Recording>, sqlx::Error> {
+        let rows = sqlx::query_as(
+            "WITH page AS (SELECT id, title FROM recordings \
              ORDER BY id LIMIT ? OFFSET ?) \
          SELECT p.id, p.title, a.artist_id FROM page p \
          LEFT JOIN recording_artists a ON a.recording_id = p.id \
          ORDER BY p.id, a.position",
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
-    Ok(collect_recordings(rows))
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+        Ok(collect_recordings(rows))
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +134,7 @@ mod tests {
 
     use crate::library::ArtistName;
 
+    use super::fixtures::list;
     use super::*;
 
     /// Create an artist used by ordered recording credits.
