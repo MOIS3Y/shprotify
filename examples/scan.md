@@ -66,6 +66,8 @@ Jobs persist their canonical `roots`, timestamps, `status`, and counters:
 
 - `imported`: new paths committed to the catalog.
 - `refreshed`: existing paths whose measured properties/tags were refreshed.
+- `unchanged`: known audio files whose last successful probe can be reused;
+  available when traversal completes.
 - `errors`: filesystem/probe failures, validation errors, and matching issues.
 - `skipped`: unsupported files, symlinks, and special files; available when
   traversal completes.
@@ -77,6 +79,40 @@ its counter independently; a later failure preserves that progress. Graceful
 shutdown waits for accepted work. After a crash/restart, unfinished jobs become
 `interrupted`; history and committed files remain. Jobs are not automatically
 resumed against possibly changed configuration. Start a new scan to retry.
+
+### Incremental and forced scans
+
+Background scans compare each regular file with its last successfully
+committed filesystem observation: size, device, inode, and nanosecond mtime
+and ctime. Matching files increment `unchanged` without parsing audio or
+rewriting their tags/properties. The final `unchanged` count is separate from
+`skipped`, which continues to mean unsupported files, links, and special files.
+Imported/refreshed/error progress is durable per file; `unchanged` and `skipped`
+are finalized when traversal succeeds, rather than writing on every cache hit.
+
+New files, files imported before this feature, and manual registrations have
+no reusable observation and are probed once. Changed files update measured
+properties and source tags while keeping existing catalog identities and
+curated associations. Observations commit in the same transaction as those
+updates. Failed probes invalidate old observations so subsequent scans retry;
+unsupported files are not cached. A file changed or replaced during probing
+is reported as an error instead of committing an inconsistent observation.
+
+The open file and its path are checked after probing. This cannot freeze a
+live collection: changes after the last check are observed on a later scan.
+Filesystem timestamps are a fast heuristic, not a content hash or duplicate
+detector; coarse or stale filesystem metadata can hide changes. To bypass the
+optimization and reread every file, run:
+
+```sh
+curl -X POST 'http://127.0.0.1:3000/api/v1/library/scans?force=true'
+```
+
+`force` defaults to `false` and is persisted in the job report. Invalid or
+unknown query options return `400`. Forced scans still preserve curated
+catalog metadata and do not retry association matching on existing paths.
+The read-only CLI always performs a full probe without opening SQLite; its
+JSON Lines format does not include internal filesystem observations.
 
 ### Catalog matching policy
 

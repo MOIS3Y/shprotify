@@ -175,7 +175,7 @@ mod tests {
         let pool = db::connect(&directory.path().join("catalog.db"))
             .await
             .unwrap();
-        let job = db::scans::create(&pool, &[]).await.unwrap();
+        let job = db::scans::create(&pool, &[], false).await.unwrap();
         (directory, pool, job.id)
     }
 
@@ -183,6 +183,7 @@ mod tests {
     fn source(path: &str, track: Option<u32>) -> ScannedFile {
         ScannedFile {
             path: path.into(),
+            state: None,
             format: "flac".into(),
             tags: AudioTags {
                 title: Some("Song".into()),

@@ -5,7 +5,10 @@
 //! or form loops. This is not a filesystem sandbox against concurrent path
 //! replacement. No file, directory, or catalog entry is created or changed.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use serde::Serialize;
@@ -21,6 +24,10 @@ pub(crate) struct Summary {
     pub(crate) skipped: usize,
     /// Failed entries, directory listings, or audio probes.
     pub(crate) errors: usize,
+    /// Previously probed files bypassed by the background scan policy.
+    /// Full CLI reports keep their existing schema and always read all files.
+    #[serde(skip)]
+    pub(crate) unchanged: usize,
 }
 
 /// One JSON Lines record; paths in errors use lossy display if not UTF-8.
@@ -55,6 +62,19 @@ pub(crate) enum Event {
 /// Blocking IO and parsing must run outside Tokio's async worker threads.
 pub(crate) fn run(
     roots: &[PathBuf],
+    emit: impl FnMut(Event) -> Result<()>,
+) -> Result<Summary> {
+    run_incremental(roots, |_| Ok(false), emit)
+}
+
+/// Traverse with a predicate that recognizes committed file observations.
+///
+/// Predicate failures are fatal (for example a failed database lookup). Probe
+/// failures remain isolated per-entry errors. Cache hits increment only the
+/// summary; no audio event or tag read occurs for unchanged files.
+pub(crate) fn run_incremental(
+    roots: &[PathBuf],
+    mut unchanged: impl FnMut(&Path) -> Result<bool>,
     mut emit: impl FnMut(Event) -> Result<()>,
 ) -> Result<Summary> {
     let mut pending = roots.to_vec();
@@ -96,6 +116,10 @@ pub(crate) fn run(
             if kind.is_dir() {
                 pending.push(path);
             } else if kind.is_file() {
+                if unchanged(&path)? {
+                    counts.unchanged += 1;
+                    continue;
+                }
                 match metadata::read(&path) {
                     Ok(Some(file)) => {
                         emit(Event::Audio {
@@ -136,6 +160,41 @@ mod tests {
     //! Traversal isolation, error reporting, and collection preservation.
 
     use super::*;
+
+    /// A cache hit bypasses even a file whose contents would fail probing.
+    #[test]
+    fn incremental_hits_do_not_probe_audio_or_emit_file_events() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("song.wav"), b"not audio").unwrap();
+        let mut events = Vec::new();
+        let summary = run_incremental(
+            &[directory.path().to_owned()],
+            |_| Ok(true),
+            |event| {
+                events.push(event);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(summary.unchanged, 1);
+        assert_eq!(summary.audio_files, 0);
+        assert_eq!(summary.errors, 0);
+        assert!(matches!(events.as_slice(), [Event::Summary { .. }]));
+    }
+
+    /// Failed cache storage cannot silently turn into skipped collection data.
+    #[test]
+    fn incremental_lookup_errors_stop_traversal() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("song.wav"), b"audio").unwrap();
+        let error = run_incremental(
+            &[directory.path().to_owned()],
+            |_| anyhow::bail!("cache lookup failed"),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "cache lookup failed");
+    }
 
     /// Nested collections emit files and errors once, then summary counts.
     #[test]

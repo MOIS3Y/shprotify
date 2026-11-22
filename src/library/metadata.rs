@@ -17,7 +17,7 @@ use lofty::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::audio_files::AudioProperties;
+use super::{audio_files::AudioProperties, file_state::FileState};
 
 /// Source metadata and measured properties of one successfully parsed file.
 #[derive(Debug, Serialize)]
@@ -30,6 +30,9 @@ pub(crate) struct ScannedFile {
     pub(crate) tags: AudioTags,
     /// Measured file size and audio properties.
     pub(crate) properties: AudioProperties,
+    /// Stable filesystem observation; unverified synthetic inputs have none.
+    #[serde(skip)]
+    pub(crate) state: Option<FileState>,
 }
 
 /// Common source tags; missing tags are represented explicitly as null.
@@ -64,9 +67,11 @@ pub(crate) fn read(path: &Path) -> Result<Option<ScannedFile>> {
         "File path must be absolute, at most 4096 bytes, without controls"
     );
     let file = File::open(path).context("Cannot open file for reading")?;
-    let size = i64::try_from(file.metadata()?.len())
+    let metadata = file.metadata()?;
+    let state = FileState::from_metadata(&metadata)?;
+    let size = i64::try_from(metadata.len())
         .context("File size exceeds the catalog limit")?;
-    let probe = Probe::new(BufReader::new(file))
+    let probe = Probe::new(BufReader::new(&file))
         .options(ParseOptions::new().read_cover_art(false))
         .guess_file_type()
         .context("Cannot detect audio format")?;
@@ -89,10 +94,12 @@ pub(crate) fn read(path: &Path) -> Result<Option<ScannedFile>> {
     let properties = audio.properties();
     let duration = i64::try_from(properties.duration().as_millis())
         .context("Audio duration exceeds the catalog limit")?;
+    state.verify(&file, path)?;
     Ok(Some(ScannedFile {
         path: name.to_owned(),
         format: format_label(audio.file_type())?.to_owned(),
         tags,
+        state: Some(state),
         properties: AudioProperties {
             size_bytes: Some(size).filter(|value| *value > 0),
             duration_ms: Some(duration).filter(|value| *value > 0),
@@ -185,6 +192,7 @@ pub(crate) mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let audio = read(&path).unwrap().unwrap();
         assert_eq!(audio.format, "wav");
+        assert_eq!(audio.state, Some(FileState::read(&path).unwrap()));
         assert_eq!(audio.path, path.to_str().unwrap());
         assert_eq!(audio.tags.title.as_deref(), Some("Source title"));
         assert_eq!(audio.tags.artist.as_deref(), Some("Source artist"));

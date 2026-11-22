@@ -9,9 +9,9 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
@@ -40,6 +40,16 @@ pub(super) fn router(pool: SqlitePool, service: ScanService) -> OpenApiRouter {
         .routes(routes!(get_scan))
         .routes(routes!(list_scan_errors))
         .with_state(ScanState { pool, service })
+}
+
+/// Optional scan policy; the default reuses successfully committed probes.
+#[derive(Default, Deserialize, IntoParams)]
+#[serde(default, deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+struct ScanOptions {
+    /// Bypass filesystem change detection and reread every regular file.
+    #[param(default = false)]
+    force: bool,
 }
 
 /// Bounded history in ascending job ID order.
@@ -72,12 +82,14 @@ struct ScanErrorPage {
 /// admission is persisted.
 /// New-file artist/release tags match within the immediate parent directory.
 /// Occupied track positions are reported without discarding imported files.
+/// Unchanged audio files are skipped unless `force=true` is requested.
 #[utoipa::path(
     post, path = "/library/scans", tag = "library_scans",
-    operation_id = "start_library_scan",
+    operation_id = "start_library_scan", params(ScanOptions),
     responses(
         (status = 202, body = ScanJob, description = "Scan accepted",
             headers(("Location" = String, description = "Scan status URL"))),
+        (status = 400, response = ErrorResponse),
         (status = 409, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
@@ -85,12 +97,22 @@ struct ScanErrorPage {
 async fn start_scan(
     State(state): State<ScanState>,
     OriginalUri(uri): OriginalUri,
+    query: Result<Query<ScanOptions>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let job = state.service.start().await.map_err(|error| match error {
-        StartError::Busy => ApiError::Conflict("A library scan is running"),
-        StartError::Stopping => ApiError::Conflict("Scanner is shutting down"),
-        StartError::Storage(error) => ApiError::from(error),
-    })?;
+    let Query(options) =
+        query.map_err(|_| ApiError::BadRequest("Invalid scan options"))?;
+    let job =
+        state.service.start(options.force).await.map_err(
+            |error| match error {
+                StartError::Busy => {
+                    ApiError::Conflict("A library scan is running")
+                }
+                StartError::Stopping => {
+                    ApiError::Conflict("Scanner is shutting down")
+                }
+                StartError::Storage(error) => ApiError::from(error),
+            },
+        )?;
     let location = format!("{}/{}", uri.path(), job.id);
     Ok((
         StatusCode::ACCEPTED,
@@ -312,8 +334,14 @@ mod tests {
         let service = ScanService::new(pool.clone(), vec![]);
         let app =
             crate::api::router(&DocsConfig::default(), &pool, service.clone());
-        let active = db::scans::create(&pool, &[]).await.unwrap();
+        let active = db::scans::create(&pool, &[], false).await.unwrap();
         let path = "/api/v1/library/scans";
+        for query in ["force=yes", "force=1", "unknown=true", "force="] {
+            let (status, _, error) =
+                request(&app, "POST", &format!("{path}?{query}")).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(error["error"]["code"], "bad_request");
+        }
         let (status, _, error) = request(&app, "POST", path).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(error["error"]["code"], "conflict");
@@ -363,6 +391,17 @@ mod tests {
         let post = &schema["paths"]["/api/v1/library/scans"]["post"];
         assert!(post["responses"]["202"]["headers"]["Location"].is_object());
         assert!(post["responses"]["409"].is_object());
+        let force = post["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|parameter| parameter["name"] == "force")
+            .unwrap();
+        assert_eq!(force["schema"]["type"], "boolean");
+        assert_eq!(force["schema"]["default"], false);
+        let properties =
+            &schema["components"]["schemas"]["ScanJob"]["properties"];
+        assert_eq!(properties["unchanged"]["type"], "integer");
         assert!(schema["paths"]["/api/v1/library/scans/{id}/errors"]
             ["get"]["responses"]["404"].is_object());
         assert!(
@@ -374,5 +413,49 @@ mod tests {
             json!(["running", "completed", "failed", "interrupted"])
         );
         assert!(schema["components"]["schemas"]["AudioTags"].is_object());
+    }
+
+    /// Query-selected force bypasses persisted snapshots through the full API.
+    #[tokio::test]
+    async fn force_query_rereads_unchanged_audio_and_persists_policy() {
+        let directory = tempfile::tempdir().unwrap();
+        let music = directory.path().join("music");
+        std::fs::create_dir(&music).unwrap();
+        std::fs::write(
+            music.join("song.wav"),
+            crate::library::metadata::tests::wave(),
+        )
+        .unwrap();
+        let pool = db::connect(&directory.path().join("library.db"))
+            .await
+            .unwrap();
+        for (query, force, refreshed, unchanged) in [
+            ("", false, 0, 0),
+            ("?force=true", true, 1, 0),
+            ("?force=false", false, 0, 1),
+        ] {
+            let service = ScanService::new(pool.clone(), vec![music.clone()]);
+            let app = crate::api::router(
+                &DocsConfig::default(),
+                &pool,
+                service.clone(),
+            );
+            let (status, headers, accepted) = request(
+                &app,
+                "POST",
+                &format!("/api/v1/library/scans{query}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::ACCEPTED);
+            assert_eq!(accepted["force"], force);
+            service.close().await;
+            let location = headers[header::LOCATION].to_str().unwrap();
+            assert!(!location.contains('?'));
+            let (_, _, result) = request(&app, "GET", location).await;
+            assert_eq!(result["status"], "completed");
+            assert_eq!(result["refreshed"], refreshed);
+            assert_eq!(result["unchanged"], unchanged);
+        }
+        pool.close().await;
     }
 }

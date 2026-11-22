@@ -11,6 +11,7 @@ use sqlx::SqlitePool;
 
 use crate::library::{
     audio_files::NewAudioFile,
+    file_state::FileState,
     metadata::{AudioTags, ScannedFile},
     recordings::NewRecording,
 };
@@ -123,6 +124,22 @@ pub(crate) async fn store(
     .bind(tags)
     .execute(&mut *transaction)
     .await?;
+    if let Some(state) = source.state {
+        sqlx::query(
+            "INSERT INTO audio_file_states (file_id, state) \
+            VALUES (?, ?) ON CONFLICT(file_id) \
+            DO UPDATE SET state = excluded.state",
+        )
+        .bind(file_id)
+        .bind(serde_json::to_string(&state)?)
+        .execute(&mut *transaction)
+        .await?;
+    } else {
+        sqlx::query("DELETE FROM audio_file_states WHERE file_id = ?")
+            .bind(file_id)
+            .execute(&mut *transaction)
+            .await?;
+    }
     let updated = sqlx::query(
         "UPDATE library_scans SET imported = imported + ?, \
          refreshed = refreshed + ? WHERE id = ? AND status = 'running'",
@@ -137,6 +154,26 @@ pub(crate) async fn store(
     }
     transaction.commit().await?;
     Ok(())
+}
+
+/// Compare a current filesystem observation to the last committed audio probe.
+///
+/// Legacy/manual files and failed imports have no snapshot and must be probed.
+/// This is a bounded lookup by the existing globally unique file path.
+pub(crate) async fn unchanged(
+    pool: &SqlitePool,
+    path: &str,
+    state: &FileState,
+) -> Result<bool, IndexError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM audio_file_states s \
+         JOIN audio_files f ON f.id = s.file_id \
+         WHERE f.path = ? AND s.state = ?)",
+    )
+    .bind(path)
+    .bind(serde_json::to_string(state)?)
+    .fetch_one(pool)
+    .await?)
 }
 
 /// Fetch the latest source tags, scoped to the recording and physical file.
@@ -171,6 +208,7 @@ mod tests {
     fn source(path: &str, title: Option<&str>) -> ScannedFile {
         ScannedFile {
             path: path.into(),
+            state: None,
             format: "flac".into(),
             tags: AudioTags {
                 title: title.map(str::to_owned),
@@ -192,7 +230,7 @@ mod tests {
         let pool = db::connect(&directory.path().join("catalog.db"))
             .await
             .unwrap();
-        let job = db::scans::create(&pool, &[]).await.unwrap();
+        let job = db::scans::create(&pool, &[], false).await.unwrap();
         for path in ["/music/one.flac", "/music/two.flac"] {
             store(&pool, job.id, source(path, Some(" Title ")))
                 .await
@@ -258,7 +296,7 @@ mod tests {
         .await
         .unwrap();
         assert!(tags(&pool, recording.id, file.id).await.unwrap().is_none());
-        let job = db::scans::create(&pool, &[]).await.unwrap();
+        let job = db::scans::create(&pool, &[], false).await.unwrap();
         for title in [Some("Changed"), Some("invalid\nsource title")] {
             store(&pool, job.id, source("/music/one.flac", title))
                 .await
@@ -289,7 +327,7 @@ mod tests {
         let pool = db::connect(&directory.path().join("catalog.db"))
             .await
             .unwrap();
-        let job = db::scans::create(&pool, &[]).await.unwrap();
+        let job = db::scans::create(&pool, &[], false).await.unwrap();
         store(&pool, job.id, source("/music/Unknown track.flac", None))
             .await
             .unwrap();
@@ -322,7 +360,7 @@ mod tests {
         let pool = db::connect(&directory.path().join("catalog.db"))
             .await
             .unwrap();
-        let job = db::scans::create(&pool, &[]).await.unwrap();
+        let job = db::scans::create(&pool, &[], false).await.unwrap();
         sqlx::query(
             "CREATE TRIGGER reject_tags BEFORE INSERT \
             ON audio_file_tags BEGIN SELECT RAISE(ABORT, 'secret'); END",
@@ -339,6 +377,7 @@ mod tests {
             "SELECT COUNT(*) FROM recordings",
             "SELECT COUNT(*) FROM audio_files",
             "SELECT COUNT(*) FROM audio_file_tags",
+            "SELECT COUNT(*) FROM audio_file_states",
             "SELECT COUNT(*) FROM artists",
             "SELECT COUNT(*) FROM releases",
             "SELECT COUNT(*) FROM scan_artist_matches",
@@ -366,7 +405,7 @@ mod tests {
         let pool = db::connect(&directory.path().join("catalog.db"))
             .await
             .unwrap();
-        let job = db::scans::create(&pool, &[]).await.unwrap();
+        let job = db::scans::create(&pool, &[], false).await.unwrap();
         let (first, second) = tokio::join!(
             store(&pool, job.id, source("/music/one.flac", Some("One"))),
             store(&pool, job.id, source("/music/one.flac", Some("Two"))),
@@ -381,6 +420,105 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 1);
+        pool.close().await;
+    }
+
+    /// Probe observations commit with catalog changes and survive reopening.
+    #[tokio::test]
+    async fn snapshots_are_atomic_and_durable() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("song.wav");
+        std::fs::write(&path, crate::library::metadata::tests::wave())
+            .unwrap();
+        let database = directory.path().join("catalog.db");
+        let pool = db::connect(&database).await.unwrap();
+        let job = db::scans::create(&pool, &[], false).await.unwrap();
+        let state = FileState::read(&path).unwrap();
+        let name = path.to_str().unwrap();
+        assert!(!unchanged(&pool, name, &state).await.unwrap());
+        sqlx::query(
+            "CREATE TRIGGER reject_snapshot BEFORE INSERT \
+            ON audio_file_states BEGIN SELECT RAISE(ABORT, 'failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let observed = crate::library::metadata::read(&path).unwrap().unwrap();
+        assert!(matches!(
+            store(&pool, job.id, observed).await,
+            Err(IndexError::Storage(_))
+        ));
+        assert!(!unchanged(&pool, name, &state).await.unwrap());
+        let rows: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM audio_files), \
+             (SELECT COUNT(*) FROM audio_file_tags)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, (0, 0));
+        sqlx::query("DROP TRIGGER reject_snapshot")
+            .execute(&pool)
+            .await
+            .unwrap();
+        store(
+            &pool,
+            job.id,
+            crate::library::metadata::read(&path).unwrap().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(unchanged(&pool, name, &state).await.unwrap());
+        pool.close().await;
+        let pool = db::connect(&database).await.unwrap();
+        assert!(unchanged(&pool, name, &state).await.unwrap());
+        let job = db::scans::find(&pool, job.id).await.unwrap().unwrap();
+        assert_eq!(job.imported, 1);
+        pool.close().await;
+    }
+
+    /// Probe errors invalidate snapshots even if filesystem metadata matches.
+    #[tokio::test]
+    async fn failed_probes_and_unverified_updates_invalidate_snapshots() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("song.wav");
+        std::fs::write(&path, crate::library::metadata::tests::wave())
+            .unwrap();
+        let pool = db::connect(&directory.path().join("catalog.db"))
+            .await
+            .unwrap();
+        let job = db::scans::create(&pool, &[], false).await.unwrap();
+        let state = FileState::read(&path).unwrap();
+        let name = path.to_str().unwrap();
+        store(
+            &pool,
+            job.id,
+            crate::library::metadata::read(&path).unwrap().unwrap(),
+        )
+        .await
+        .unwrap();
+        db::scans::record_error(&pool, job.id, name, "Probe failed")
+            .await
+            .unwrap();
+        assert!(!unchanged(&pool, name, &state).await.unwrap());
+        store(
+            &pool,
+            job.id,
+            crate::library::metadata::read(&path).unwrap().unwrap(),
+        )
+        .await
+        .unwrap();
+        let mut unverified =
+            crate::library::metadata::read(&path).unwrap().unwrap();
+        unverified.state = None;
+        store(&pool, job.id, unverified).await.unwrap();
+        assert!(!unchanged(&pool, name, &state).await.unwrap());
+        let tags: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audio_file_tags")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(tags, 1);
         pool.close().await;
     }
 }

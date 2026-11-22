@@ -10,14 +10,17 @@ use crate::jobs::{ScanIssue, ScanJob, StartError};
 pub(crate) async fn create(
     pool: &SqlitePool,
     roots: &[PathBuf],
+    force: bool,
 ) -> Result<ScanJob, StartError> {
     let roots: Vec<_> =
         roots.iter().map(|path| path.to_string_lossy()).collect();
     let result = sqlx::query_as(
-        "INSERT INTO library_scans (status, roots) VALUES ('running', ?) \
+        "INSERT INTO library_scans (status, roots, force) \
+         VALUES ('running', ?, ?) \
          RETURNING *",
     )
     .bind(sqlx::types::Json(roots))
+    .bind(force)
     .fetch_one(pool)
     .await;
     match result {
@@ -72,7 +75,7 @@ pub(crate) async fn list(
         .await
 }
 
-/// Store a per-entry error and increment progress in the same transaction.
+/// Record a failed probe, invalidate its old observation, and count the error.
 pub(crate) async fn record_error(
     pool: &SqlitePool,
     id: i64,
@@ -80,6 +83,13 @@ pub(crate) async fn record_error(
     message: &str,
 ) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
+    sqlx::query(
+        "DELETE FROM audio_file_states WHERE file_id IN \
+        (SELECT id FROM audio_files WHERE path = ?)",
+    )
+    .bind(path)
+    .execute(&mut *transaction)
+    .await?;
     record_error_in(&mut transaction, id, path, message).await?;
     transaction.commit().await
 }
@@ -125,20 +135,23 @@ pub(crate) async fn errors(
     .await
 }
 
-/// Persist terminal status and final skipped count after the worker joins.
+/// Persist terminal status and final counters after the worker joins.
 pub(crate) async fn finish(
     pool: &SqlitePool,
     id: i64,
     status: &str,
     skipped: i64,
+    unchanged: i64,
     message: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE library_scans SET status = ?, skipped = ?, message = ?, \
+        "UPDATE library_scans SET status = ?, skipped = ?, unchanged = ?, \
+         message = ?, \
          finished_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'running'",
     )
     .bind(status)
     .bind(skipped)
+    .bind(unchanged)
     .bind(message)
     .bind(id)
     .execute(pool)
@@ -160,8 +173,10 @@ mod tests {
         let path = directory.path().join("catalog.db");
         let pool = crate::db::connect(&path).await.unwrap();
         let roots = vec![directory.path().to_owned()];
-        let (first, second) =
-            tokio::join!(create(&pool, &roots), create(&pool, &roots),);
+        let (first, second) = tokio::join!(
+            create(&pool, &roots, false),
+            create(&pool, &roots, false),
+        );
         let job = match (first, second) {
             (Ok(job), Err(StartError::Busy))
             | (Err(StartError::Busy), Ok(job)) => job,
@@ -181,8 +196,10 @@ mod tests {
         let report = errors(&pool, job.id, 1, 0).await.unwrap();
         assert_eq!(report[0].path, "/music/broken");
         assert!(errors(&pool, job.id, 1, 1).await.unwrap().is_empty());
-        let new = create(&pool, &[]).await.unwrap();
-        finish(&pool, new.id, "completed", 5, None).await.unwrap();
+        let new = create(&pool, &[], false).await.unwrap();
+        finish(&pool, new.id, "completed", 5, 0, None)
+            .await
+            .unwrap();
         recover(&pool).await.unwrap();
         let new = find(&pool, new.id).await.unwrap().unwrap();
         assert_eq!(new.status, ScanStatus::Completed);

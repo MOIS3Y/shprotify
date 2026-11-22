@@ -2,6 +2,7 @@
 
 pub(crate) mod audio_files;
 pub(crate) mod directories;
+pub(crate) mod file_state;
 pub(crate) mod matching;
 pub(crate) mod metadata;
 pub(crate) mod recordings;

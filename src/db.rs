@@ -137,7 +137,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8]);
         pool.close().await;
     }
 
@@ -190,11 +190,12 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(matches, (0, 0));
-        let job = scans::create(&pool, &[]).await.unwrap();
+        let job = scans::create(&pool, &[], false).await.unwrap();
         indexing::store(
             &pool,
             job.id,
             crate::library::metadata::ScannedFile {
+                state: None,
                 path: "/music/legacy.flac".into(),
                 format: "flac".into(),
                 tags: crate::library::metadata::AudioTags {
@@ -218,6 +219,76 @@ mod tests {
                 .is_empty()
         );
         assert!(releases::list(&pool, 50, 0).await.unwrap().is_empty());
+        pool.close().await;
+    }
+
+    /// Legacy files probe once; old job snapshots gain safe policy defaults.
+    #[tokio::test]
+    async fn upgrades_catalog_to_incremental_scans_without_false_cache_hits() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let audio = directory.path().join("song.wav");
+        fs::write(&audio, crate::library::metadata::tests::wave()).unwrap();
+        let previous = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 7)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        sqlx::query("INSERT INTO recordings (id, title) VALUES (1, 'Legacy')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO audio_files (recording_id, path, format) \
+            VALUES (1, ?, 'wav')",
+        )
+        .bind(audio.to_str().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO library_scans (status, roots, refreshed) \
+            VALUES ('completed', '[]', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let old = scans::find(&pool, 1).await.unwrap().unwrap();
+        assert!(!old.force);
+        assert_eq!(old.unchanged, 0);
+        assert_eq!(old.refreshed, 1);
+        let state =
+            crate::library::file_state::FileState::read(&audio).unwrap();
+        assert!(
+            !indexing::unchanged(&pool, audio.to_str().unwrap(), &state)
+                .await
+                .unwrap()
+        );
+        let job = scans::create(&pool, &[], false).await.unwrap();
+        indexing::store(
+            &pool,
+            job.id,
+            crate::library::metadata::read(&audio).unwrap().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            indexing::unchanged(&pool, audio.to_str().unwrap(), &state)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            recordings::find(&pool, 1).await.unwrap().unwrap().title,
+            "Legacy"
+        );
+        let job = scans::find(&pool, job.id).await.unwrap().unwrap();
+        assert_eq!(job.imported, 0);
+        assert_eq!(job.refreshed, 1);
         pool.close().await;
     }
 
