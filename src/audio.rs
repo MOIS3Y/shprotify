@@ -1,8 +1,10 @@
-//! Read-only access to registered media within configured collection roots.
+//! Read-only media delivery and client-reported personal playback history.
 //!
 //! Resolve directories relative to open descriptors and reject symlinks at
 //! every component. No canonicalize-then-open check or pathname reopening is
 //! used for the media handle. Run these filesystem operations off-thread.
+
+pub(crate) mod history;
 
 use std::{
     fs::File,

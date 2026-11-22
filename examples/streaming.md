@@ -90,3 +90,6 @@ transfer, not a replacement JSON error. Rescanning does not mutate files, so
 normal catalog scans can coexist with streaming. Stream reads do not update
 catalog metadata, reactions or listening history. Revocation applies to new
 requests and does not cancel an already accepted transfer.
+
+Players report actual listening separately through the
+[personal history API](history.md); transfers alone do not count as listens.

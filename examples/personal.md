@@ -178,3 +178,5 @@ Personal routes never accept a user ID as authority. Credentials determine the
 account; missing, malformed, duplicate, or revoked credentials return JSON 401
 with a Bearer `WWW-Authenticate` challenge. Storage failures remain safe 500
 responses. Swagger's Authorize control accepts the raw token for these routes.
+
+Client-reported listening history is documented in [history.md](history.md).

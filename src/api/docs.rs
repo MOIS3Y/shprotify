@@ -39,6 +39,7 @@ Internal failure details are logged on the server and never returned.
 HEAD responses have no body, including error responses."
     ),
     tags(
+        (name = "history", description = "Personal playback history"),
         (name = "users", description = "Administrative account management"),
         (name = "auth", description = "Password login and session logout"),
         (name = "personal", description = "Account, reactions and favorites"),
@@ -177,7 +178,7 @@ mod tests {
             response.headers()[header::CONTENT_TYPE],
             "application/json"
         );
-        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         let schema: Value = serde_json::from_slice(&body).unwrap();
         assert!(schema["openapi"].as_str().unwrap().starts_with("3."));
         assert_eq!(schema["info"]["title"], "Shprotify API");
@@ -208,7 +209,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 29);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 31);
         assert!(schema["paths"].get("/health").is_none());
     }
 
@@ -216,7 +217,7 @@ mod tests {
     #[tokio::test]
     async fn schema_contains_artist_contracts() {
         let response = get("/openapi.json", true).await;
-        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         let schema: Value = serde_json::from_slice(&body).unwrap();
         let paths = &schema["paths"];
         let create = &paths["/api/v1/artists"]["post"];
@@ -254,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn schema_contains_release_contracts() {
         let response = get("/openapi.json", true).await;
-        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         let schema: Value = serde_json::from_slice(&body).unwrap();
         let paths = &schema["paths"];
         let create = &paths["/api/v1/releases"]["post"];
@@ -294,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn schema_contains_independent_recording_contracts() {
         let response = get("/openapi.json", true).await;
-        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         let schema: Value = serde_json::from_slice(&body).unwrap();
         let paths = &schema["paths"];
         let create = &paths["/api/v1/recordings"]["post"];
@@ -327,7 +328,7 @@ mod tests {
     #[tokio::test]
     async fn schema_contains_release_track_contracts() {
         let response = get("/openapi.json", true).await;
-        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         let schema: Value = serde_json::from_slice(&body).unwrap();
         let paths = &schema["paths"];
         let collection = &paths["/api/v1/releases/{id}/tracks"];
@@ -372,7 +373,7 @@ mod tests {
     #[tokio::test]
     async fn schema_contains_audio_file_metadata_contracts() {
         let response = get("/openapi.json", true).await;
-        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         let schema: Value = serde_json::from_slice(&body).unwrap();
         let paths = &schema["paths"];
         let collection = &paths["/api/v1/recordings/{id}/files"];

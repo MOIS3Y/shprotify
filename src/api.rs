@@ -5,6 +5,7 @@ mod audio_files;
 mod docs;
 mod duplicates;
 pub(crate) mod error;
+mod history;
 mod pagination;
 #[cfg(test)]
 mod permissions;
@@ -44,6 +45,7 @@ pub(crate) fn router(
         .merge(streaming::router(pool.clone(), scans.roots()))
         .merge(sessions::router(pool.clone(), *auth))
         .merge(personal::router(pool.clone()))
+        .merge(history::router(pool.clone()))
         .merge(users::router(pool.clone()))
         .merge(artists::router(pool.clone()))
         .merge(releases::router(pool.clone()))

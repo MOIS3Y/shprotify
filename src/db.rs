@@ -7,6 +7,7 @@
 pub(crate) mod artists;
 pub(crate) mod audio_files;
 pub(crate) mod duplicates;
+pub(crate) mod history;
 pub(crate) mod indexing;
 mod matching;
 pub(crate) mod reactions;
@@ -82,6 +83,50 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// Existing credentials/preferences survive adding an initially empty log.
+    #[tokio::test]
+    async fn upgrades_existing_accounts_to_playback_history() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let previous = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 14)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        users::create(&pool, "legacy", &crate::auth::digest("legacy-key"))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO recordings (id, title) VALUES (1,'Track')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        reactions::set(
+            &pool,
+            1,
+            1,
+            Some(crate::library::reactions::Reaction::Like),
+        )
+        .await
+        .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        assert!(
+            users::authenticate(&pool, &crate::auth::digest("legacy-key"))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            reactions::favorites(&pool, 1, 50, 0).await.unwrap().len(),
+            1
+        );
+        assert!(history::list(&pool, 1, 50, 0).await.unwrap().is_empty());
+        pool.close().await;
+    }
 
     /// Existing entities become searchable when FTS is introduced.
     #[tokio::test]
@@ -324,7 +369,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=14).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=15).collect::<Vec<_>>());
         pool.close().await;
     }
 
