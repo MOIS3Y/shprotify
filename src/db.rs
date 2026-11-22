@@ -203,6 +203,66 @@ mod tests {
         pool.close().await;
     }
 
+    /// Existing keys/data survive role migration without implicit privileges.
+    #[tokio::test]
+    async fn upgrades_existing_accounts_as_members_and_preserves_keys() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let old = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 12)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &old).await.unwrap();
+        sqlx::query("INSERT INTO users (id, name) VALUES (1, 'admin')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let digest = crate::auth::digest("legacy-key");
+        sqlx::query("INSERT INTO user_keys (user_id, digest) VALUES (1, ?)")
+            .bind(&digest)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO recordings (id, title) VALUES (1, 'Track')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO recording_reactions \
+            (user_id, recording_id, reaction, changed_at) \
+            VALUES (1, 1, 'like', '2000-01-01T00:00:00.000Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let user = users::authenticate(&pool, &digest).await.unwrap().unwrap();
+        assert_eq!(user.role, crate::auth::Role::Member);
+        assert_eq!(user.id, 1);
+        users::set_role(&pool, "admin", crate::auth::Role::Admin)
+            .await
+            .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        assert_eq!(
+            users::authenticate(&pool, &digest)
+                .await
+                .unwrap()
+                .unwrap()
+                .role,
+            crate::auth::Role::Admin
+        );
+        assert_eq!(
+            reactions::favorites(&pool, 1, 50, 0).await.unwrap().len(),
+            1
+        );
+        pool.close().await;
+    }
+
     /// Resolve one test migration without adding test tables to the binary.
     async fn migrator(directory: &Path, sql: &str) -> Migrator {
         fs::write(directory.join("1_test.sql"), sql).unwrap();
@@ -263,7 +323,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
         pool.close().await;
     }
 

@@ -24,6 +24,7 @@ All API operations are served under `/api/v1`.
 Errors use a JSON envelope with `error.code` and `error.message`:
 - 400: `bad_request` — Malformed request or invalid parameters.
 - 401: `unauthorized` — Missing or invalid personal key; Bearer challenge.
+- 403: `forbidden` — Administrator role required.
 - 413: `payload_too_large` — Request body exceeds the size limit.
 - 415: `unsupported_media_type` — JSON content type is required.
 - 422: `validation_error` — Invalid JSON fields or domain input.

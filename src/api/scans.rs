@@ -33,6 +33,13 @@ struct ScanState {
     service: ScanService,
 }
 
+impl axum::extract::FromRef<ScanState> for SqlitePool {
+    /// Expose the pool to generic authentication guards for scan routes.
+    fn from_ref(state: &ScanState) -> Self {
+        state.pool.clone()
+    }
+}
+
 /// Register version-local scan operations and their shared OpenAPI schemas.
 pub(super) fn router(pool: SqlitePool, service: ScanService) -> OpenApiRouter {
     OpenApiRouter::new()
@@ -83,18 +90,24 @@ struct ScanErrorPage {
 /// New-file artist/release tags match within the immediate parent directory.
 /// Occupied track positions are reported without discarding imported files.
 /// Unchanged audio files are skipped unless `force=true` is requested.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     post, path = "/library/scans", tag = "library_scans",
     operation_id = "start_library_scan", params(ScanOptions),
+    security(("personal_key" = [])),
     responses(
         (status = 202, body = ScanJob, description = "Scan accepted",
             headers(("Location" = String, description = "Scan status URL"))),
         (status = 400, response = ErrorResponse),
         (status = 409, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn start_scan(
+    _admin: crate::auth::Admin,
     State(state): State<ScanState>,
     OriginalUri(uri): OriginalUri,
     query: Result<Query<ScanOptions>, QueryRejection>,
@@ -123,18 +136,24 @@ async fn start_scan(
 }
 
 /// Fetch persisted status; completed jobs may contain isolated entry errors.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     get, path = "/library/scans/{id}", tag = "library_scans",
     operation_id = "get_library_scan",
     params(("id" = i64, Path, description = "Scan identifier", minimum = 1)),
+    security(("personal_key" = [])),
     responses(
         (status = 200, body = ScanJob, description = "Scan status"),
         (status = 400, response = ErrorResponse),
         (status = 404, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn get_scan(
+    _admin: crate::auth::Admin,
     State(state): State<ScanState>,
     path: Result<Path<i64>, PathRejection>,
 ) -> Result<Json<ScanJob>, ApiError> {
@@ -148,16 +167,22 @@ async fn get_scan(
 }
 
 /// List history with bounded pagination, including jobs from older processes.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     get, path = "/library/scans", tag = "library_scans",
     operation_id = "list_library_scans", params(Pagination),
+    security(("personal_key" = [])),
     responses(
         (status = 200, body = ScanPage, description = "Scan history"),
         (status = 400, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn list_scans(
+    _admin: crate::auth::Admin,
     State(state): State<ScanState>,
     query: Result<Query<Pagination>, QueryRejection>,
 ) -> Result<Json<ScanPage>, ApiError> {
@@ -173,18 +198,24 @@ async fn list_scans(
 }
 
 /// Read file errors and matching issues without exposing SQL diagnostics.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     get, path = "/library/scans/{id}/errors", tag = "library_scans",
     operation_id = "list_library_scan_errors", params(Pagination,
         ("id" = i64, Path, description = "Scan identifier", minimum = 1)),
+    security(("personal_key" = [])),
     responses(
         (status = 200, body = ScanErrorPage, description = "Scan errors"),
         (status = 400, response = ErrorResponse),
         (status = 404, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn list_scan_errors(
+    _admin: crate::auth::Admin,
     State(state): State<ScanState>,
     path: Result<Path<i64>, PathRejection>,
     query: Result<Query<Pagination>, QueryRejection>,
@@ -263,6 +294,7 @@ mod tests {
         let service = ScanService::new(pool.clone(), vec![music]);
         let app =
             crate::api::router(&DocsConfig::default(), &pool, service.clone());
+        let app = crate::api::tests::with_admin(app, &pool).await;
         let path = "/api/v1/library/scans";
         let (status, _, empty) = request(&app, "GET", path).await;
         assert_eq!(status, StatusCode::OK);
@@ -334,6 +366,7 @@ mod tests {
         let service = ScanService::new(pool.clone(), vec![]);
         let app =
             crate::api::router(&DocsConfig::default(), &pool, service.clone());
+        let app = crate::api::tests::with_admin(app, &pool).await;
         let active = db::scans::create(&pool, &[], false).await.unwrap();
         let path = "/api/v1/library/scans";
         for query in ["force=yes", "force=1", "unknown=true", "force="] {
@@ -440,6 +473,7 @@ mod tests {
                 &pool,
                 service.clone(),
             );
+            let app = crate::api::tests::with_admin(app, &pool).await;
             let (status, headers, accepted) = request(
                 &app,
                 "POST",

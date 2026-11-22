@@ -11,7 +11,7 @@ pub(crate) async fn create(
 ) -> Result<User, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let user: User = sqlx::query_as(
-        "INSERT INTO users (name) VALUES (?) RETURNING id, name",
+        "INSERT INTO users (name) VALUES (?) RETURNING id, name, role",
     )
     .bind(name)
     .fetch_one(&mut *tx)
@@ -33,7 +33,7 @@ pub(crate) async fn issue(
 ) -> Result<User, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let user: User =
-        sqlx::query_as("SELECT id, name FROM users WHERE name = ?")
+        sqlx::query_as("SELECT id, name, role FROM users WHERE name = ?")
             .bind(name)
             .fetch_one(&mut *tx)
             .await?;
@@ -53,7 +53,7 @@ pub(crate) async fn revoke(
 ) -> Result<User, sqlx::Error> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let user: User =
-        sqlx::query_as("SELECT id, name FROM users WHERE name = ?")
+        sqlx::query_as("SELECT id, name, role FROM users WHERE name = ?")
             .bind(name)
             .fetch_one(&mut *tx)
             .await?;
@@ -71,11 +71,27 @@ pub(crate) async fn authenticate(
     digest: &str,
 ) -> Result<Option<User>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT u.id, u.name FROM users u \
+        "SELECT u.id, u.name, u.role FROM users u \
         JOIN user_keys k ON k.user_id = u.id WHERE k.digest = ?",
     )
     .bind(digest)
     .fetch_optional(pool)
+    .await
+}
+
+/// Change permissions without replacing account, keys, or personal data.
+pub(crate) async fn set_role(
+    pool: &SqlitePool,
+    name: &str,
+    role: crate::auth::Role,
+) -> Result<User, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE users SET role = ? WHERE name = ? \
+        RETURNING id, name, role",
+    )
+    .bind(role)
+    .bind(name)
+    .fetch_one(pool)
     .await
 }
 

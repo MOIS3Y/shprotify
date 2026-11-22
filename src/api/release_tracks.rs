@@ -83,10 +83,13 @@ impl From<TrackError> for ApiError {
 ///
 /// The parent must exist. Occupied disc/position pairs return 409 without
 /// changing the tracklist; nonexistent recordings return 422.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     post, path = "/releases/{id}/tracks", tag = "release_tracks",
     operation_id = "create_release_track", request_body = CreateTrack,
     params(("id" = i64, Path, minimum = 1, description = "Release ID")),
+    security(("personal_key" = [])),
     responses(
         (status = 201, body = ReleaseTrack, description = "Track created",
             headers(("Location" = String, description = "Track URL"))),
@@ -96,10 +99,13 @@ impl From<TrackError> for ApiError {
         (status = 413, response = ErrorResponse),
         (status = 415, response = ErrorResponse),
         (status = 422, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn create_track(
+    _admin: crate::auth::Admin,
     State(pool): State<SqlitePool>,
     OriginalUri(uri): OriginalUri,
     release_id: Result<Path<i64>, PathRejection>,
@@ -231,6 +237,7 @@ mod tests {
             &pool,
             crate::jobs::ScanService::new(pool.clone(), vec![]),
         );
+        let app = crate::api::tests::with_admin(app, &pool).await;
         (directory, pool, app, release.id, recording.id)
     }
 

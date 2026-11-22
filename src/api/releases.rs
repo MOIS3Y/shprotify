@@ -62,9 +62,12 @@ struct ReleasePage {
 ///
 /// Titles may repeat. Empty credits support uncredited compilations. Unknown
 /// artists cause 422 and leave no release or credit rows behind.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     post, path = "/releases", tag = "releases",
     operation_id = "create_release", request_body = CreateRelease,
+    security(("personal_key" = [])),
     responses(
         (status = 201, body = Release, description = "Release created",
             headers(("Location" = String, description = "Release URL"))),
@@ -72,10 +75,13 @@ struct ReleasePage {
         (status = 413, response = ErrorResponse),
         (status = 415, response = ErrorResponse),
         (status = 422, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn create_release(
+    _admin: crate::auth::Admin,
     State(pool): State<SqlitePool>,
     OriginalUri(uri): OriginalUri,
     payload: Result<Json<CreateRelease>, JsonRejection>,
@@ -179,6 +185,7 @@ mod tests {
             &pool,
             crate::jobs::ScanService::new(pool.clone(), vec![]),
         );
+        let router = crate::api::tests::with_admin(router, &pool).await;
         (directory, pool, router)
     }
 

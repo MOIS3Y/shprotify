@@ -32,6 +32,15 @@ pub(crate) enum Command {
 /// Account operations require local access to the configured SQLite database.
 #[derive(Debug, Subcommand)]
 pub(crate) enum UserCommand {
+    /// Set account permissions locally; existing keys use the new role.
+    Role {
+        /// Existing account name.
+        #[arg(long)]
+        name: String,
+        /// Required privilege level: member or admin.
+        #[arg(long, value_enum)]
+        role: crate::auth::Role,
+    },
     /// Create an account and print its first bearer key once as JSON.
     Create {
         /// Unique ASCII account name, normalized to lowercase.
@@ -61,11 +70,16 @@ pub(crate) async fn run_user(
     let name = match command {
         UserCommand::Create { name }
         | UserCommand::Token { name }
-        | UserCommand::Revoke { name } => auth::name(name)?,
+        | UserCommand::Revoke { name }
+        | UserCommand::Role { name, .. } => auth::name(name)?,
     };
     let pool = db::connect(path).await?;
     let result = async {
         let output = match command {
+            UserCommand::Role { role, .. } => {
+                let user = db::users::set_role(&pool, &name, *role).await?;
+                serde_json::json!({"user": user})
+            }
             UserCommand::Create { .. } | UserCommand::Token { .. } => {
                 let token = auth::token()?;
                 let digest = auth::digest(&token);
@@ -117,6 +131,44 @@ mod tests {
             assert_eq!(cli.config, Some(PathBuf::from("dev/config.toml")));
         }
         assert!(Cli::try_parse_from(["shprotify", "user", "create"]).is_err());
+    }
+
+    /// Roles require an explicit valid choice; there is no implicit promotion.
+    #[test]
+    fn parses_explicit_account_role_changes() {
+        let cli = Cli::try_parse_from([
+            "shprotify",
+            "user",
+            "role",
+            "--name",
+            "alice",
+            "--role",
+            "admin",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::User {
+                command: UserCommand::Role {
+                    role: crate::auth::Role::Admin,
+                    ..
+                }
+            })
+        ));
+        for args in [
+            vec!["shprotify", "user", "role", "--name", "alice"],
+            vec![
+                "shprotify",
+                "user",
+                "role",
+                "--name",
+                "alice",
+                "--role",
+                "superuser",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
     }
 
     /// Startup works without an explicit configuration file.

@@ -56,9 +56,12 @@ struct ArtistPage {
 ///
 /// Names are trimmed and may duplicate existing names. Control characters
 /// are rejected. No authentication is implemented at this development stage.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     post, path = "/artists", tag = "artists",
     operation_id = "create_artist", request_body = CreateArtist,
+    security(("personal_key" = [])),
     responses(
         (status = 201, body = Artist, description = "Artist created",
             headers(("Location" = String,
@@ -67,10 +70,13 @@ struct ArtistPage {
         (status = 413, response = ErrorResponse),
         (status = 415, response = ErrorResponse),
         (status = 422, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn create_artist(
+    _admin: crate::auth::Admin,
     State(pool): State<SqlitePool>,
     OriginalUri(uri): OriginalUri,
     payload: Result<Json<CreateArtist>, JsonRejection>,
@@ -168,6 +174,7 @@ mod tests {
             &pool,
             crate::jobs::ScanService::new(pool.clone(), vec![]),
         );
+        let app = crate::api::tests::with_admin(app, &pool).await;
         (directory, pool, app)
     }
 

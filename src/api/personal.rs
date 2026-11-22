@@ -254,7 +254,7 @@ mod tests {
         let (status, me) =
             request(&app, "GET", "/api/v1/me", Some(&alice_key), None).await;
         assert_eq!(status, 200);
-        assert_eq!(me, json!({"id":alice.id,"name":"alice"}));
+        assert_eq!(me, json!({"id":alice.id,"name":"alice","role":"member"}));
         let (_, empty) = request(
             &app,
             "GET",

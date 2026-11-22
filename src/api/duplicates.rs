@@ -38,16 +38,22 @@ struct DuplicatePage {
 /// Hashes include tags and container bytes. Different encodings or retagged
 /// files are not identified as equivalent recordings. Paths may be missing
 /// since their last observation. No files or catalog identities are changed.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     get, path = "/library/duplicates", tag = "library_scans",
     operation_id = "list_duplicate_files", params(Pagination),
+    security(("personal_key" = [])),
     responses(
         (status = 200, body = DuplicatePage, description = "Duplicate files"),
         (status = 400, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn list_duplicates(
+    _admin: crate::auth::Admin,
     State(pool): State<SqlitePool>,
     query: Result<Query<Pagination>, QueryRejection>,
 ) -> Result<Json<DuplicatePage>, ApiError> {
@@ -103,6 +109,7 @@ mod tests {
             &pool,
             service,
         );
+        let app = crate::api::tests::with_admin(app, &pool).await;
         let response = app
             .clone()
             .oneshot(

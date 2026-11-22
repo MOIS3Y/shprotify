@@ -22,10 +22,38 @@ stdout; diagnostic logs remain on stderr. Local account commands do not need
 working music roots or an HTTP listener. They require operator access to the
 configured SQLite file. Use HTTPS when sending bearer keys outside loopback.
 
-This stage authenticates **personal endpoints only**. Existing catalog reads,
-catalog mutations, and scan routes remain public. Password login, HTTP account
-management, roles, and authorization of shared catalog operations are separate
-subsequent features. There is no public self-registration/bootstrap endpoint.
+## Roles and shared operations
+
+New accounts and accounts upgraded from earlier versions have role `member`,
+even if named `admin`. Members can use their personal endpoints. Ordinary
+catalog reads, search, health, and optional documentation remain public.
+
+Set permissions locally using the configured database:
+
+```sh
+cargo run -- --config dev/shprotify.toml user role --name alice --role admin
+cargo run -- --config dev/shprotify.toml user role --name alice --role member
+```
+
+Promote an existing account explicitly to provision the first administrator.
+There is no implicit first-user promotion or public bootstrap endpoint. Local
+operator access can always restore an administrator, including after demoting
+the last one. The role command returns the user identity without issuing a key.
+
+Only `admin` may create artists/releases/recordings/release tracks, register
+file metadata, start scans, inspect scan history/status/errors, and read exact
+duplicate reports. Anonymous/invalid credentials receive 401 with a Bearer
+challenge. A valid member receives JSON 403 (`forbidden`) without a challenge.
+Authorization occurs before body/query validation or any catalog/job mutation.
+
+Roles are read from SQLite on every request, not embedded in the bearer key.
+Promotion/demotion applies to subsequent requests with all existing keys;
+account IDs, keys, reactions, and favorites remain intact. Already accepted
+requests/jobs are not cancelled by a later role change. `/me` exposes the
+current role; role headers, query parameters, and client claims grant no rights.
+Keys may still be revoked independently of the role.
+
+Password login and HTTP account management remain subsequent features.
 
 Set `PERSONAL_API_KEY` in your client environment to the delivered key:
 

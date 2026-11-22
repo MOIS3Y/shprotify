@@ -6,6 +6,8 @@ mod docs;
 mod duplicates;
 pub(crate) mod error;
 mod pagination;
+#[cfg(test)]
+mod permissions;
 mod personal;
 mod recordings;
 mod release_tracks;
@@ -87,7 +89,7 @@ async fn health() -> Json<Health> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     //! Router-level checks without opening network sockets.
 
     use axum::{
@@ -98,6 +100,34 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+
+    /// Authenticate catalog contract fixtures with a real administrator key.
+    /// Authorization-specific tests use the unmodified production router.
+    pub(crate) async fn with_admin(
+        app: Router,
+        pool: &sqlx::SqlitePool,
+    ) -> Router {
+        let token = crate::auth::token().unwrap();
+        let name = format!("test-{}", &token[4..20]);
+        crate::db::users::create(pool, &name, &crate::auth::digest(&token))
+            .await
+            .unwrap();
+        crate::db::users::set_role(pool, &name, crate::auth::Role::Admin)
+            .await
+            .unwrap();
+        app.layer(axum::middleware::from_fn(
+            move |mut request: Request<Body>, next: axum::middleware::Next| {
+                let token = token.clone();
+                async move {
+                    request.headers_mut().insert(
+                        header::AUTHORIZATION,
+                        format!("Bearer {token}").parse().unwrap(),
+                    );
+                    next.run(request).await
+                }
+            },
+        ))
+    }
 
     /// Build the default router with all documentation routes disabled.
     fn router() -> Router {

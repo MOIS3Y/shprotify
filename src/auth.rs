@@ -2,13 +2,36 @@
 
 use crate::{api::error::ApiError, db};
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRef, FromRequestParts},
     http::{header, request::Parts},
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use utoipa::ToSchema;
+
+/// Server-side permissions checked from SQLite on each authenticated request.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    sqlx::Type,
+    ToSchema,
+    clap::ValueEnum,
+)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
+pub(crate) enum Role {
+    /// Personal preferences; no authority to modify the shared catalog.
+    #[default]
+    Member,
+    /// Shared catalog writes, scanning, and administrative reports.
+    Admin,
+}
 
 /// Public account identity without credential information.
 #[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
@@ -17,18 +40,24 @@ pub(crate) struct User {
     pub(crate) id: i64,
     /// Unique normalized ASCII account name.
     pub(crate) name: String,
+    /// Current permissions, independent of which key is used.
+    pub(crate) role: Role,
 }
 
 /// Principal derived only from an active bearer key, never a supplied user ID.
 pub(crate) struct CurrentUser(pub(crate) User);
 
-impl FromRequestParts<SqlitePool> for CurrentUser {
+impl<S> FromRequestParts<S> for CurrentUser
+where
+    S: Send + Sync,
+    SqlitePool: FromRef<S>,
+{
     type Rejection = ApiError;
 
     /// Reject absent, malformed, duplicate, and revoked credentials.
     async fn from_request_parts(
         parts: &mut Parts,
-        pool: &SqlitePool,
+        state: &S,
     ) -> Result<Self, Self::Rejection> {
         let mut headers = parts.headers.get_all(header::AUTHORIZATION).iter();
         let value = headers
@@ -48,10 +77,37 @@ impl FromRequestParts<SqlitePool> for CurrentUser {
             return Err(ApiError::Unauthorized);
         }
         Ok(Self(
-            db::users::authenticate(pool, &digest(token))
-                .await?
-                .ok_or(ApiError::Unauthorized)?,
+            db::users::authenticate(
+                &SqlitePool::from_ref(state),
+                &digest(token),
+            )
+            .await?
+            .ok_or(ApiError::Unauthorized)?,
         ))
+    }
+}
+
+/// Guard for administrative operations; client role claims are never trusted.
+pub(crate) struct Admin;
+
+impl<S> FromRequestParts<S> for Admin
+where
+    S: Send + Sync,
+    SqlitePool: FromRef<S>,
+{
+    type Rejection = ApiError;
+
+    /// Authenticate first (401), then reject insufficient privileges (403).
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let CurrentUser(user) =
+            CurrentUser::from_request_parts(parts, state).await?;
+        if user.role != Role::Admin {
+            return Err(ApiError::Forbidden);
+        }
+        Ok(Self)
     }
 }
 

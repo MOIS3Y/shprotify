@@ -45,10 +45,13 @@ control characters, and paths over 4096 bytes are reported as errors.
 
 ## Background indexing through HTTP
 
-With the server running, start indexing its configured collection roots:
+With the server running, use an administrator key to index configured roots.
+Set `PERSONAL_API_KEY` to that key (see `personal.md` for local role setup).
+All scan endpoints and duplicate reports require `admin`; members receive 403.
 
 ```sh
-curl -X POST http://127.0.0.1:3000/api/v1/library/scans
+curl -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  -X POST http://127.0.0.1:3000/api/v1/library/scans
 ```
 
 The response is `202 Accepted` with the accepted job snapshot and a `Location`
@@ -59,7 +62,8 @@ async worker threads. A second active scan returns `409 Conflict`.
 ### Exact duplicate reports
 
 ```sh
-curl 'http://127.0.0.1:3000/api/v1/library/duplicates?limit=50&offset=0'
+curl -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  'http://127.0.0.1:3000/api/v1/library/duplicates?limit=50&offset=0'
 ```
 
 Each item contains `sha256`, `file_id`, `recording_id`, and `path`. The page
@@ -78,9 +82,12 @@ or removed. Different encodings and differently tagged copies require separate
 musical identity matching, which remains subsequent work.
 
 ```sh
-curl http://127.0.0.1:3000/api/v1/library/scans/1
-curl 'http://127.0.0.1:3000/api/v1/library/scans/1/errors?limit=50&offset=0'
-curl 'http://127.0.0.1:3000/api/v1/library/scans?limit=50&offset=0'
+curl -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  http://127.0.0.1:3000/api/v1/library/scans/1
+curl -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  'http://127.0.0.1:3000/api/v1/library/scans/1/errors?limit=50&offset=0'
+curl -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  'http://127.0.0.1:3000/api/v1/library/scans?limit=50&offset=0'
 ```
 
 Jobs persist their canonical `roots`, timestamps, `status`, and counters:
@@ -126,7 +133,8 @@ detector; coarse or stale filesystem metadata can hide changes. To bypass the
 optimization and reread every file, run:
 
 ```sh
-curl -X POST 'http://127.0.0.1:3000/api/v1/library/scans?force=true'
+curl -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  -X POST 'http://127.0.0.1:3000/api/v1/library/scans?force=true'
 ```
 
 `force` defaults to `false` and is persisted in the job report. Invalid or

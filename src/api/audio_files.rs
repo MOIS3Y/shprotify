@@ -76,10 +76,13 @@ impl From<FileError> for ApiError {
 /// This does not upload, read, move, or verify a file. Paths are normalized
 /// lexically without resolving symlinks; repeated normalized paths return 409
 /// even across recordings. Scanning and media probing are separate stages.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     post, path = "/recordings/{id}/files", tag = "audio_files",
     operation_id = "register_audio_file", request_body = RegisterFile,
     params(("id" = i64, Path, minimum = 1, description = "Recording ID")),
+    security(("personal_key" = [])),
     responses(
         (status = 201, body = AudioFile, description = "Metadata registered",
             headers(("Location" = String, description = "Metadata URL"))),
@@ -89,10 +92,13 @@ impl From<FileError> for ApiError {
         (status = 413, response = ErrorResponse),
         (status = 415, response = ErrorResponse),
         (status = 422, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn register_file(
+    _admin: crate::auth::Admin,
     State(pool): State<SqlitePool>,
     OriginalUri(uri): OriginalUri,
     recording_id: Result<Path<i64>, PathRejection>,
@@ -238,6 +244,7 @@ mod tests {
             &pool,
             crate::jobs::ScanService::new(pool.clone(), vec![]),
         );
+        let app = crate::api::tests::with_admin(app, &pool).await;
         (directory, pool, app, recording.id)
     }
 

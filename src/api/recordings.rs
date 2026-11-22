@@ -62,9 +62,12 @@ struct RecordingPage {
 ///
 /// Titles may repeat and credits may be omitted. A nonexistent credited artist
 /// causes 422 and leaves no recording or credit rows behind.
+///
+/// Requires the administrator role.
 #[utoipa::path(
     post, path = "/recordings", tag = "recordings",
     operation_id = "create_recording", request_body = CreateRecording,
+    security(("personal_key" = [])),
     responses(
         (status = 201, body = Recording, description = "Recording created",
             headers(("Location" = String, description = "Recording URL"))),
@@ -72,10 +75,13 @@ struct RecordingPage {
         (status = 413, response = ErrorResponse),
         (status = 415, response = ErrorResponse),
         (status = 422, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 403, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
     )
 )]
 async fn create_recording(
+    _admin: crate::auth::Admin,
     State(pool): State<SqlitePool>,
     OriginalUri(uri): OriginalUri,
     payload: Result<Json<CreateRecording>, JsonRejection>,
@@ -181,6 +187,7 @@ mod tests {
             &pool,
             crate::jobs::ScanService::new(pool.clone(), vec![]),
         );
+        let app = crate::api::tests::with_admin(app, &pool).await;
         (directory, pool, app)
     }
 

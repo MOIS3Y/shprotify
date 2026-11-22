@@ -9,6 +9,7 @@
 //!
 //! - 400: `bad_request`, malformed JSON or invalid query/path parameters.
 //! - 401: `unauthorized`, absent/invalid key; includes `WWW-Authenticate`.
+//! - 403: `forbidden`, authenticated account lacks administrator privileges.
 //! - 413: `payload_too_large`, request body exceeds the extractor limit.
 //! - 415: `unsupported_media_type`, JSON content type is required.
 //! - 422: `validation_error`, invalid JSON fields or domain input.
@@ -29,6 +30,9 @@ use utoipa::ToSchema;
 /// HTTP failure with a stable client-facing code and message.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
+    /// Authenticated account lacks permission for a shared operation.
+    #[error("Administrator role required")]
+    Forbidden,
     /// Missing, malformed, or revoked personal bearer credential.
     #[error("Authentication required")]
     Unauthorized,
@@ -93,6 +97,7 @@ struct ErrorBody {
     #[schema(examples(
         "bad_request",
         "unauthorized",
+        "forbidden",
         "payload_too_large",
         "unsupported_media_type",
         "validation_error",
@@ -112,6 +117,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code) = match &self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::Validation(_) => {
