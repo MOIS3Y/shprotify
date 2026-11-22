@@ -32,10 +32,23 @@ pub(crate) async fn set_password(
     name: &str,
     hash: &str,
 ) -> Result<User, sqlx::Error> {
+    let id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = ?")
+        .bind(name)
+        .fetch_one(pool)
+        .await?;
+    set_password_by_id(pool, id, hash).await
+}
+
+/// Reset an existing account password and revoke its sessions atomically.
+pub(crate) async fn set_password_by_id(
+    pool: &SqlitePool,
+    id: i64,
+    hash: &str,
+) -> Result<User, sqlx::Error> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let user: User =
-        sqlx::query_as("SELECT id, name, role FROM users WHERE name = ?")
-            .bind(name)
+        sqlx::query_as("SELECT id, name, role FROM users WHERE id = ?")
+            .bind(id)
             .fetch_one(&mut *tx)
             .await?;
     sqlx::query(
@@ -91,6 +104,24 @@ pub(crate) async fn revoke(
         .bind(digest)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// Revoke all sessions for an existing account, retaining password and keys.
+pub(crate) async fn revoke_all(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let _: i64 = sqlx::query_scalar("SELECT id FROM users WHERE id = ?")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM user_sessions WHERE user_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 

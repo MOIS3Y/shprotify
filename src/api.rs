@@ -15,6 +15,7 @@ mod releases;
 mod scans;
 mod search;
 mod sessions;
+mod users;
 
 use axum::{Json, Router};
 use serde::Serialize;
@@ -41,6 +42,7 @@ pub(crate) fn router(
         .routes(routes!(health))
         .merge(sessions::router(pool.clone(), *auth))
         .merge(personal::router(pool.clone()))
+        .merge(users::router(pool.clone()))
         .merge(artists::router(pool.clone()))
         .merge(releases::router(pool.clone()))
         .merge(recordings::router(pool.clone()))

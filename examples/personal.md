@@ -44,7 +44,8 @@ Passwords are stored as salted Argon2id v19 PHC strings (19 MiB memory,
 two passes, one lane). Every setting generates a new salt and atomically
 revokes all password sessions for that account. Personal keys and preferences
 remain intact. Existing accounts remain key-only until a password is set.
-There is no public registration or password-reset endpoint.
+There is no public registration or unauthenticated password-reset endpoint.
+Administrators can reset passwords through [account management](users.md).
 
 Send JSON to `POST /api/v1/auth/login`:
 
@@ -99,7 +100,8 @@ revokes only that session. Other sessions and personal keys remain usable.
 Expired, revoked or absent session tokens receive 401; personal keys also
 receive 401 on logout and are revoked through `user revoke` instead. That CLI
 command revokes personal keys only. To invalidate every password session,
-set a new password through `user password`.
+set a new password through `user password` or use the administrative
+[session revocation endpoint](users.md).
 
 Token refresh, public registration and browser cookie transport are deferred.
 After expiry, clients must log in again.
@@ -135,7 +137,8 @@ requests/jobs are not cancelled by a later role change. `/me` exposes the
 current role; role headers, query parameters, and client claims grant no rights.
 Keys may still be revoked independently of the role.
 
-HTTP account management remains a subsequent feature.
+Administrators can also manage accounts through the
+[account management API](users.md), including passwords, roles and credentials.
 
 Set `PERSONAL_API_KEY` in your client environment to the delivered key:
 

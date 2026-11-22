@@ -181,6 +181,7 @@ mod tests {
     /// A session authenticates ordinary routes and can be independently ended.
     #[tokio::test]
     async fn password_login_logout_and_roles_use_real_credentials() {
+        let _guard = auth::password::test_guard().await;
         let directory = tempfile::tempdir().unwrap();
         let pool = db::connect(&directory.path().join("catalog.db"))
             .await

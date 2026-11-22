@@ -55,7 +55,7 @@ struct ArtistPage {
 /// Add an artist to the shared catalog.
 ///
 /// Names are trimmed and may duplicate existing names. Control characters
-/// are rejected. No authentication is implemented at this development stage.
+/// are rejected.
 ///
 /// Requires the administrator role.
 #[utoipa::path(

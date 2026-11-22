@@ -28,7 +28,7 @@ Errors use a JSON envelope with `error.code` and `error.message`:
 - 413: `payload_too_large` — Request body exceeds the size limit.
 - 415: `unsupported_media_type` — JSON content type is required.
 - 422: `validation_error` — Invalid JSON fields or domain input.
-- 429: `too_many_requests` — Login workers busy; includes `Retry-After`.
+- 429: `too_many_requests` — Password workers busy; includes `Retry-After`.
 - 404: `not_found` — Resource not found.
 - 405: `method_not_allowed` — Method not allowed; includes `Allow`.
 - 409: `conflict` — Catalog state conflicts with the requested change.
@@ -38,6 +38,7 @@ Internal failure details are logged on the server and never returned.
 HEAD responses have no body, including error responses."
     ),
     tags(
+        (name = "users", description = "Administrative account management"),
         (name = "auth", description = "Password login and session logout"),
         (name = "personal", description = "Account, reactions and favorites"),
         (name = "system", description = "Process health"),
@@ -206,7 +207,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 22);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 28);
         assert!(schema["paths"].get("/health").is_none());
     }
 

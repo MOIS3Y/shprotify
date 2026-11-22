@@ -7,7 +7,7 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::{header, request::Parts},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use utoipa::ToSchema;
@@ -21,6 +21,7 @@ use utoipa::ToSchema;
     PartialEq,
     Eq,
     Serialize,
+    Deserialize,
     sqlx::Type,
     ToSchema,
     clap::ValueEnum,

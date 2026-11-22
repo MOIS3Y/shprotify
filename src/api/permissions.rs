@@ -262,6 +262,7 @@ async fn schema_documents_every_administrative_operation() {
             if (method != "get" && catalog)
                 || path.starts_with("/api/v1/library/scans")
                 || path == "/api/v1/library/duplicates"
+                || path.starts_with("/api/v1/users")
             {
                 count += 1;
                 assert!(operation["security"][0]["personal_key"].is_array());
@@ -270,7 +271,7 @@ async fn schema_documents_every_administrative_operation() {
             }
         }
     }
-    assert_eq!(count, 10);
+    assert_eq!(count, 18);
     assert!(schema["paths"]["/api/v1/artists"]["get"]["security"].is_null());
     assert_eq!(
         schema["components"]["schemas"]["Role"]["enum"],

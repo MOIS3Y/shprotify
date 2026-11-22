@@ -22,7 +22,7 @@ pub(crate) fn validate(password: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Admit HTTP verification without building an unbounded queue of secrets.
+/// Admit HTTP password work without an unbounded queue of secrets.
 pub(crate) fn admit() -> Result<SemaphorePermit<'static>, ApiError> {
     WORKERS.try_acquire().map_err(|_| ApiError::TooManyRequests)
 }
@@ -41,6 +41,14 @@ pub(crate) async fn hash(
 ) -> anyhow::Result<String> {
     validate(&password)?;
     let permit = WORKERS.acquire().await?;
+    hash_admitted(password, permit).await
+}
+
+/// Hash input after admission; cancellation does not release worker capacity.
+pub(crate) async fn hash_admitted(
+    password: Zeroizing<String>,
+    permit: SemaphorePermit<'static>,
+) -> anyhow::Result<String> {
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         encode(&password)
@@ -71,6 +79,13 @@ pub(crate) async fn verify(
     .await?
 }
 
+/// Serialize tests that deliberately occupy the process-wide worker budget.
+#[cfg(test)]
+pub(crate) async fn test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    static TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    TESTS.lock().await
+}
+
 #[cfg(test)]
 mod tests {
     //! Password boundaries and fresh Argon2id salts.
@@ -92,6 +107,7 @@ mod tests {
     /// Every encoding has a fresh salt and the selected Argon2id parameters.
     #[tokio::test]
     async fn hashes_use_random_salts() {
+        let _guard = test_guard().await;
         let first = hash(Zeroizing::new("a strong password".into()))
             .await
             .unwrap();

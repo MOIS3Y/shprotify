@@ -32,7 +32,7 @@ use utoipa::ToSchema;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
     /// Password verification is at capacity; avoid queued costly work.
-    #[error("Too many login attempts; retry later")]
+    #[error("Too many password operations; retry later")]
     TooManyRequests,
     /// Authenticated account lacks permission for a shared operation.
     #[error("Administrator role required")]
