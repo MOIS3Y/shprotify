@@ -85,6 +85,71 @@ mod tests {
 
     use super::*;
 
+    /// Upgrading adds no publication and preserves old versions and contents.
+    #[tokio::test]
+    async fn upgrades_existing_playlists_as_private_without_changing_versions()
+    {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let previous = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 16)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        users::create(&pool, "legacy", &crate::auth::digest("legacy-key"))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Track')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO playlists (id,user_id,name,version) \
+            VALUES (1,1,'Legacy',7)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO playlist_tracks (playlist_id,position,recording_id) \
+            VALUES (1,1,1),(1,2,1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let times: (String, String) = sqlx::query_as(
+            "SELECT created_at, updated_at FROM playlists WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let playlist = playlists::find(&pool, 1, 1).await.unwrap().unwrap();
+        assert!(!playlist.is_public);
+        assert_eq!(playlist.version, 7);
+        assert_eq!((playlist.created_at, playlist.updated_at), times);
+        assert_eq!(
+            playlists::tracks(&pool, 1, 1, 50, 0)
+                .await
+                .unwrap()
+                .items
+                .len(),
+            2
+        );
+        assert!(playlists::published(&pool, 50, 0).await.unwrap().is_empty());
+        assert!(
+            playlists::publish(&pool, 1, 1, 7, true)
+                .await
+                .unwrap()
+                .is_public
+        );
+        pool.close().await;
+    }
+
     /// Existing preferences/history survive the initially empty playlist
     /// tables.
     #[tokio::test]
@@ -430,7 +495,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=16).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=17).collect::<Vec<_>>());
         pool.close().await;
     }
 

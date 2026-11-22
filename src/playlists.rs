@@ -1,4 +1,4 @@
-//! Private named playlists, separate from the dynamic favorites collection.
+//! Owned playlists with optional publication inside the instance.
 
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 /// Bound full-list edits so validation and transactions have predictable cost.
 pub(crate) const MAX_TRACKS: usize = 10_000;
 
-/// Validated metadata for a private playlist; names need not be unique.
+/// Validated playlist metadata; names need not be unique.
 #[derive(Debug)]
 pub(crate) struct PlaylistDetails {
     /// Trimmed display name without control characters.
@@ -51,7 +51,7 @@ pub(crate) fn validate_tracks(recordings: &[i64]) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Private playlist metadata; contents are read through a separate page.
+/// Playlist metadata; publication permits authenticated, read-only discovery.
 #[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
 pub(crate) struct Playlist {
     /// Stable account-scoped resource ID.
@@ -61,6 +61,8 @@ pub(crate) struct Playlist {
     /// Free-text description, empty when omitted on create/metadata
     /// replacement.
     pub(crate) description: String,
+    /// Whether other authenticated accounts may read this playlist.
+    pub(crate) is_public: bool,
     /// Positive mutation version; supply it for edits and deletion.
     pub(crate) version: i64,
     /// Server creation time, UTC ISO 8601 with milliseconds.

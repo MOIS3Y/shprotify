@@ -1,5 +1,4 @@
-//! Owner-scoped playlists with atomic, version-checked metadata and track
-//! edits.
+//! Owned playlist mutations and consistent publication snapshots.
 
 use crate::playlists::{Playlist, PlaylistDetails, PlaylistTrack};
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
@@ -39,7 +38,8 @@ pub(crate) async fn create(
 ) -> Result<Playlist, sqlx::Error> {
     sqlx::query_as(
         "INSERT INTO playlists (user_id, name, description) VALUES (?, ?, ?) \
-        RETURNING id, name, description, version, created_at, updated_at",
+        RETURNING id, name, description, version, created_at, updated_at, \
+        is_public",
     )
     .bind(user)
     .bind(details.name)
@@ -56,7 +56,8 @@ pub(crate) async fn list(
     offset: i64,
 ) -> Result<Vec<Playlist>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, name, description, version, created_at, updated_at \
+        "SELECT id, name, description, version, created_at, updated_at, \
+        is_public \
         FROM playlists WHERE user_id = ? ORDER BY id LIMIT ? OFFSET ?",
     )
     .bind(user)
@@ -82,7 +83,8 @@ async fn read(
     id: i64,
 ) -> Result<Option<Playlist>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, name, description, version, created_at, updated_at \
+        "SELECT id, name, description, version, created_at, updated_at, \
+        is_public \
         FROM playlists WHERE user_id = ? AND id = ?",
     )
     .bind(user)
@@ -121,7 +123,8 @@ async fn update(
         version = version + 1, \
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
         WHERE user_id = ? AND id = ? \
-        RETURNING id, name, description, version, created_at, updated_at",
+        RETURNING id, name, description, version, created_at, updated_at, \
+        is_public",
     )
     .bind(name)
     .bind(description)
@@ -182,7 +185,22 @@ pub(crate) async fn tracks(
     let playlist = read(&mut tx, user, id)
         .await?
         .ok_or(PlaylistError::NotFound)?;
-    let items = sqlx::query_as(
+    let items = read_tracks(&mut tx, id, limit, offset).await?;
+    tx.commit().await?;
+    Ok(TrackSnapshot {
+        version: playlist.version,
+        items,
+    })
+}
+
+/// Read track occurrences inside the same snapshot as their visibility check.
+async fn read_tracks(
+    connection: &mut SqliteConnection,
+    id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<PlaylistTrack>, sqlx::Error> {
+    sqlx::query_as(
         "SELECT t.position, t.recording_id, r.title FROM playlist_tracks t \
         JOIN recordings r ON r.id = t.recording_id WHERE t.playlist_id = ? \
         ORDER BY t.position LIMIT ? OFFSET ?",
@@ -190,8 +208,91 @@ pub(crate) async fn tracks(
     .bind(id)
     .bind(limit)
     .bind(offset)
-    .fetch_all(&mut *tx)
-    .await?;
+    .fetch_all(connection)
+    .await
+}
+
+/// Publish/unpublish an owned playlist without changing its name or tracks.
+/// Visibility shares the same version precondition as all other mutations.
+pub(crate) async fn publish(
+    pool: &SqlitePool,
+    user: i64,
+    id: i64,
+    version: i64,
+    is_public: bool,
+) -> Result<Playlist, PlaylistError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut playlist = editable(&mut tx, user, id, version).await?;
+    if playlist.is_public != is_public {
+        playlist = sqlx::query_as(
+            "UPDATE playlists SET is_public = ?, version = version + 1, \
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
+            WHERE user_id = ? AND id = ? \
+            RETURNING id, name, description, version, created_at, updated_at, \
+            is_public",
+        )
+        .bind(is_public)
+        .bind(user)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(playlist)
+}
+
+/// Page published playlists only; authentication is enforced by the API.
+pub(crate) async fn published(
+    pool: &SqlitePool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Playlist>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, name, description, version, created_at, updated_at, \
+        is_public FROM playlists WHERE is_public = 1 ORDER BY id \
+        LIMIT ? OFFSET ?",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
+/// Find a currently published playlist, regardless of requester ownership.
+pub(crate) async fn find_published(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<Option<Playlist>, sqlx::Error> {
+    read_published(&mut *pool.acquire().await?, id).await
+}
+
+/// Check publication in the connection's current read snapshot.
+async fn read_published(
+    connection: &mut SqliteConnection,
+    id: i64,
+) -> Result<Option<Playlist>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, name, description, version, created_at, updated_at, \
+        is_public FROM playlists WHERE id = ? AND is_public = 1",
+    )
+    .bind(id)
+    .fetch_optional(connection)
+    .await
+}
+
+/// Read contents and publication/version from one snapshot, preventing a
+/// concurrent unpublish/private edit from leaking a newer private track list.
+pub(crate) async fn published_tracks(
+    pool: &SqlitePool,
+    id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<TrackSnapshot, PlaylistError> {
+    let mut tx = pool.begin().await?;
+    let playlist = read_published(&mut tx, id)
+        .await?
+        .ok_or(PlaylistError::NotFound)?;
+    let items = read_tracks(&mut tx, id, limit, offset).await?;
     tx.commit().await?;
     Ok(TrackSnapshot {
         version: playlist.version,
@@ -281,6 +382,141 @@ mod tests {
     /// Canonical metadata shared by create and no-op update fixtures.
     fn details() -> PlaylistDetails {
         PlaylistDetails::new("Mix", "Description").unwrap()
+    }
+
+    /// Publication is versioned, owner-only, and preserved by ordinary edits.
+    #[tokio::test]
+    async fn publication_keeps_mutations_owner_only() {
+        let (_directory, pool) = setup().await;
+        let playlist = create(&pool, 1, details()).await.unwrap();
+        assert!(!playlist.is_public);
+        replace_tracks(&pool, 1, playlist.id, 1, &[1, 2, 1])
+            .await
+            .unwrap();
+        assert!(published(&pool, 50, 0).await.unwrap().is_empty());
+        assert!(find_published(&pool, playlist.id).await.unwrap().is_none());
+        assert!(matches!(
+            published_tracks(&pool, playlist.id, 50, 0).await,
+            Err(PlaylistError::NotFound)
+        ));
+        assert!(matches!(
+            publish(&pool, 2, playlist.id, 999, true).await,
+            Err(PlaylistError::NotFound)
+        ));
+        let shared = publish(&pool, 1, playlist.id, 2, true).await.unwrap();
+        assert!(shared.is_public);
+        assert_eq!(shared.version, 3);
+        let noop = publish(&pool, 1, playlist.id, 3, true).await.unwrap();
+        assert_eq!(noop.version, 3);
+        assert_eq!(noop.updated_at, shared.updated_at);
+        assert!(matches!(
+            publish(&pool, 1, playlist.id, 2, false).await,
+            Err(PlaylistError::StaleVersion)
+        ));
+        let renamed = edit(
+            &pool,
+            1,
+            playlist.id,
+            3,
+            PlaylistDetails::new("Shared mix", "new").unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(renamed.is_public);
+        let ordered = replace_tracks(&pool, 1, playlist.id, 4, &[2, 1])
+            .await
+            .unwrap();
+        assert!(ordered.is_public);
+        assert_eq!(ordered.version, 5);
+        let page = published_tracks(&pool, playlist.id, 50, 0).await.unwrap();
+        assert_eq!(page.version, 5);
+        assert_eq!(page.items[0].recording_id, 2);
+        assert_eq!(page.items[1].recording_id, 1);
+        let other = create(&pool, 2, details()).await.unwrap();
+        publish(&pool, 2, other.id, 1, true).await.unwrap();
+        assert_eq!(published(&pool, 1, 0).await.unwrap()[0].id, playlist.id);
+        assert_eq!(published(&pool, 1, 1).await.unwrap()[0].id, other.id);
+        assert_eq!(list(&pool, 1, 50, 0).await.unwrap().len(), 1);
+        let hidden = publish(&pool, 1, playlist.id, 5, false).await.unwrap();
+        assert!(!hidden.is_public);
+        assert_eq!(hidden.version, 6);
+        assert!(find_published(&pool, playlist.id).await.unwrap().is_none());
+        assert!(find(&pool, 1, playlist.id).await.unwrap().is_some());
+        delete(&pool, 2, other.id, 2).await.unwrap();
+        assert!(published(&pool, 50, 0).await.unwrap().is_empty());
+        assert_eq!(
+            tracks(&pool, 1, playlist.id, 50, 0)
+                .await
+                .unwrap()
+                .items
+                .len(),
+            2
+        );
+        pool.close().await;
+    }
+
+    /// Public reads cannot expose a later private version of the contents.
+    #[tokio::test]
+    async fn publication_and_tracks_share_a_snapshot_during_unpublish() {
+        let (_directory, pool) = setup().await;
+        let playlist = create(&pool, 1, details()).await.unwrap();
+        replace_tracks(&pool, 1, playlist.id, 1, &[1])
+            .await
+            .unwrap();
+        publish(&pool, 1, playlist.id, 2, true).await.unwrap();
+        let mut snapshot = pool.begin().await.unwrap();
+        let visible = read_published(&mut snapshot, playlist.id)
+            .await
+            .unwrap()
+            .unwrap();
+        publish(&pool, 1, playlist.id, 3, false).await.unwrap();
+        replace_tracks(&pool, 1, playlist.id, 4, &[2])
+            .await
+            .unwrap();
+        let old_tracks = read_tracks(&mut snapshot, playlist.id, 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(visible.version, 3);
+        assert_eq!(old_tracks[0].recording_id, 1);
+        snapshot.commit().await.unwrap();
+        assert!(find_published(&pool, playlist.id).await.unwrap().is_none());
+        assert!(matches!(
+            published_tracks(&pool, playlist.id, 50, 0).await,
+            Err(PlaylistError::NotFound)
+        ));
+        assert_eq!(
+            tracks(&pool, 1, playlist.id, 50, 0).await.unwrap().items[0]
+                .recording_id,
+            2
+        );
+        pool.close().await;
+    }
+
+    /// Publication cannot race an ordinary edit using the same source version.
+    #[tokio::test]
+    async fn visibility_and_metadata_share_one_mutation_version() {
+        let (_directory, pool) = setup().await;
+        let playlist = create(&pool, 1, details()).await.unwrap();
+        let (publication, metadata) = tokio::join!(
+            publish(&pool, 1, playlist.id, 1, true),
+            edit(
+                &pool,
+                1,
+                playlist.id,
+                1,
+                PlaylistDetails::new("Renamed", "").unwrap()
+            ),
+        );
+        assert_ne!(publication.is_ok(), metadata.is_ok());
+        let error = match publication {
+            Err(error) => error,
+            Ok(_) => metadata.unwrap_err(),
+        };
+        assert!(matches!(error, PlaylistError::StaleVersion));
+        let saved = find(&pool, 1, playlist.id).await.unwrap().unwrap();
+        assert_eq!(saved.version, 2);
+        assert_eq!(saved.is_public, saved.name == "Mix");
+        pool.close().await;
     }
 
     /// Repeated recordings and reorders survive reopen; failures roll back

@@ -1,9 +1,10 @@
-# Private playlists
+# Owned playlists and instance publication
 
-All playlist operations are scoped to the authenticated account using a
-personal key or password session. Members and administrators have identical
-rights over their own playlists. Another user's playlist ID returns 404 for
-reads, edits and deletion, including for administrators.
+All `/me/playlists` operations are scoped to the authenticated account using
+a personal key or password session. Members and administrators have identical
+rights over their own playlists. Another user's ID returns 404 on these owner
+routes even after publication. Separate read-only publication routes below
+are available to authenticated instance members.
 
 | Method | Path under `/api/v1` | Behavior |
 | --- | --- | --- |
@@ -14,19 +15,24 @@ reads, edits and deletion, including for administrators.
 | DELETE | `/me/playlists/{id}?version=N` | Delete using the current version. |
 | GET | `/me/playlists/{id}/tracks` | Page ordered recording occurrences. |
 | PUT | `/me/playlists/{id}/tracks` | Atomically replace the entire ordered list. |
+| PUT | `/me/playlists/{id}/visibility` | Publish/unpublish with a version check. |
+| GET | `/playlists` | Page all currently published playlists. |
+| GET | `/playlists/{id}` | Read published metadata. |
+| GET | `/playlists/{id}/tracks` | Page published track occurrences. |
 
 Create with `{"name":"Road","description":"Night driving"}`. Name is trimmed,
 required, 1–255 Unicode characters, without controls. Description defaults to
 empty, is trimmed and accepts up to 2000 Unicode characters; newlines and tabs
 are allowed. Other control characters are rejected. Names need not be unique,
 even within the same account. Metadata responses have `id`, `name`,
-`description`, `version`, `created_at`, and `updated_at`; timestamps are UTC
-ISO 8601 with millisecond precision. The owner is derived from credentials.
+`description`, `is_public`, `version`, `created_at`, and `updated_at`;
+timestamps are UTC ISO 8601 with millisecond precision. The owner is derived from credentials.
 
 ## Editing and concurrency
 
-A new playlist has version 1. Supply its last observed version in every PUT
-body, and as a query parameter for DELETE. Effective metadata or track changes
+A new playlist has version 1 and `is_public: false`. Supply its last observed
+version in every PUT body, and as a query parameter for DELETE. Effective
+metadata, visibility or track changes
 increment the same version. A stale version returns 409 without modifying
 anything. Fetch the current state and reconcile before retrying. This includes
 retries after a lost response: an applied edit is not silently re-applied over
@@ -86,6 +92,60 @@ occurrences. Recordings, source files, history, reactions and favorites remain
 intact. Recordings referenced by playlists cannot be deleted directly from
 SQLite until those references are removed, preserving playlist order.
 
+## Publishing inside the instance
+
+Publication is explicit. For an owned playlist currently at version 2:
+
+```sh
+curl -X PUT -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"version":2,"is_public":true}' \
+  http://127.0.0.1:3000/api/v1/me/playlists/1/visibility
+```
+
+The response has `is_public: true` and version 3. Both the version and boolean
+are required; null/string booleans are rejected. Existing playlists upgraded
+from earlier versions stay private without changing their versions or tracks.
+
+Publication makes the name, description, metadata and ordered recordings
+readable by **every authenticated account on this instance**. Anonymous reads
+still receive 401. Use GET `/api/v1/playlists` to discover published lists,
+GET `/api/v1/playlists/{id}` for metadata, and GET
+`/api/v1/playlists/{id}/tracks` for contents. GET routes also support HEAD.
+The catalog includes one's own published playlists and excludes private ones.
+Its pagination/order matches the owner list; track pages have the same
+position and version fields as the owner endpoints.
+
+```sh
+curl -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  'http://127.0.0.1:3000/api/v1/playlists?limit=50&offset=0'
+curl -H "Authorization: Bearer $PERSONAL_API_KEY" \
+  http://127.0.0.1:3000/api/v1/playlists/1/tracks
+```
+
+Readers receive no editing rights, even administrators. All writes remain on
+the owner's `/me/playlists` routes, where another account still receives 404.
+Publication does not expose owner IDs, credentials or other personal data.
+It does not bypass the authentication/filesystem policy of audio streaming.
+
+Publication is live: subsequent owner name/description/order edits appear on
+the shared read routes and preserve `is_public`. It is not a copied playlist.
+Visibility changes share the mutation version, so concurrent publication and
+ordinary edits cannot silently overwrite each other. Repeating the current
+visibility with the current version is a no-op. A stale version receives 409,
+including for an otherwise unchanged publication request.
+
+Set `is_public: false` using the current version to stop publication. New
+shared metadata/track reads return 404 for everyone, including the owner; the
+owner can still read and edit via `/me/playlists`. Contents are retained.
+Deleting a published playlist also removes it from discovery/shared reads.
+
+Visibility and content are read in one SQLite snapshot. An already accepted
+read may finish with its old public snapshot, but it cannot combine an old
+public flag with a newer private track list. Shared responses use
+`Cache-Control: private, no-store`. Unpublishing blocks new access; previously
+received data cannot be recalled from another client's memory or saved copy.
+
 ## Favorites, privacy and validation
 
 The dynamic [favorites collection](personal.md) remains a separate feature.
@@ -96,8 +156,9 @@ No ordinary playlist is created automatically from existing favorites.
 Revoking credentials does not erase playlists. Successful responses use
 `Cache-Control: private, no-store`. All routes authenticate before parsing
 input. Invalid credentials receive 401 with a Bearer challenge. Unknown JSON
-fields such as `user_id` or `public` are rejected. Publication/sharing,
-per-occurrence mutations and playback queues are subsequent features.
+fields such as `user_id` or `public` are rejected. `is_public` is accepted only
+by the visibility endpoint, not creation or metadata PUT. Per-occurrence
+mutations and playback queues remain subsequent features.
 
 Invalid JSON fields/domain values return 422; malformed JSON, IDs, queries or
 missing/nonpositive DELETE version return 400. Missing JSON content type is

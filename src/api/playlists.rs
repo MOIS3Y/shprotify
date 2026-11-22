@@ -1,4 +1,4 @@
-//! Private playlist CRUD and version-checked replacement of ordered tracks.
+//! Owned playlist mutations and authenticated publication reads.
 
 use super::{
     error::{ApiError, ErrorResponse},
@@ -29,6 +29,10 @@ pub(super) fn router(pool: SqlitePool) -> OpenApiRouter {
         .routes(routes!(create_playlist, list_playlists))
         .routes(routes!(get_playlist, edit_playlist, delete_playlist))
         .routes(routes!(get_tracks, replace_tracks))
+        .routes(routes!(set_visibility))
+        .routes(routes!(list_published))
+        .routes(routes!(get_published))
+        .routes(routes!(get_published_tracks))
         .layer(DefaultBodyLimit::max(256 * 1024))
         .with_state(pool)
 }
@@ -74,7 +78,18 @@ struct ReplaceTracks {
     recording_ids: Vec<i64>,
 }
 
-/// Explicit version precondition for deleting a private playlist.
+/// Explicit publication policy; metadata edits never implicitly change it.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct SetVisibility {
+    /// Current playlist version, also shared with name and track mutations.
+    #[schema(minimum = 1)]
+    version: i64,
+    /// True permits read-only access to authenticated instance members.
+    is_public: bool,
+}
+
+/// Explicit version precondition for deleting an owned playlist.
 #[derive(Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]
 #[into_params(parameter_in = Query)]
@@ -84,7 +99,7 @@ struct DeleteVersion {
     version: i64,
 }
 
-/// A bounded collection of playlist metadata belonging to the current user.
+/// A bounded metadata page, selected by ownership or publication policy.
 #[derive(Serialize, ToSchema)]
 struct PlaylistPage {
     /// Playlists in ascending ID order.
@@ -144,7 +159,7 @@ async fn create_playlist(
 #[utoipa::path(get, path = "/me/playlists", tag = "playlists",
     operation_id = "list_playlists", params(Pagination),
     security(("personal_key" = [])), responses(
-        (status = 200, body = PlaylistPage, description = "Private playlists"),
+        (status = 200, body = PlaylistPage, description = "Owned playlists"),
         (status = 400, response = ErrorResponse),
         (status = 401, response = ErrorResponse),
         (status = 500, response = ErrorResponse)
@@ -321,6 +336,120 @@ async fn replace_tracks(
     Ok(private(Json(playlist)))
 }
 
+/// Publish/unpublish an owned playlist using the current mutation version.
+/// Visibility changes do not grant editing rights to other accounts.
+#[utoipa::path(put, path = "/me/playlists/{id}/visibility", tag = "playlists",
+    operation_id = "set_playlist_visibility", request_body = SetVisibility,
+    params(("id" = i64, Path, minimum = 1, description = "Playlist ID")),
+    security(("personal_key" = [])), responses(
+        (status = 200, body = Playlist, description = "Publication policy"),
+        (status = 400, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 404, response = ErrorResponse),
+        (status = 409, response = ErrorResponse),
+        (status = 413, response = ErrorResponse),
+        (status = 415, response = ErrorResponse),
+        (status = 422, response = ErrorResponse),
+        (status = 500, response = ErrorResponse)
+    ))]
+async fn set_visibility(
+    CurrentUser(user): CurrentUser,
+    State(pool): State<SqlitePool>,
+    id: Result<Path<i64>, PathRejection>,
+    input: Result<Json<SetVisibility>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let id = playlist_id(id)?;
+    let Json(input) = input?;
+    version(input.version)?;
+    let playlist = db::playlists::publish(
+        &pool,
+        user.id,
+        id,
+        input.version,
+        input.is_public,
+    )
+    .await
+    .map_err(playlist_error)?;
+    Ok(private(Json(playlist)))
+}
+
+/// Discover currently published playlists; anonymous browsing is not allowed.
+#[utoipa::path(get, path = "/playlists", tag = "playlists",
+    operation_id = "list_published_playlists", params(Pagination),
+    security(("personal_key" = [])), responses(
+        (status = 200, body = PlaylistPage, description = "Published lists"),
+        (status = 400, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 500, response = ErrorResponse)
+    ))]
+async fn list_published(
+    _user: CurrentUser,
+    State(pool): State<SqlitePool>,
+    query: Result<Query<Pagination>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let page = pagination(query)?;
+    let items =
+        db::playlists::published(&pool, page.limit, page.offset).await?;
+    Ok(private(Json(PlaylistPage {
+        items,
+        limit: page.limit,
+        offset: page.offset,
+    })))
+}
+
+/// Read published metadata; private and missing playlists both return 404.
+#[utoipa::path(get, path = "/playlists/{id}", tag = "playlists",
+    operation_id = "get_published_playlist",
+    params(("id" = i64, Path, minimum = 1, description = "Playlist ID")),
+    security(("personal_key" = [])), responses(
+        (status = 200, body = Playlist, description = "Published playlist"),
+        (status = 400, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 404, response = ErrorResponse),
+        (status = 500, response = ErrorResponse)
+    ))]
+async fn get_published(
+    _user: CurrentUser,
+    State(pool): State<SqlitePool>,
+    id: Result<Path<i64>, PathRejection>,
+) -> Result<Response, ApiError> {
+    let playlist = db::playlists::find_published(&pool, playlist_id(id)?)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(private(Json(playlist)))
+}
+
+/// Read published contents in the same snapshot as visibility and version.
+#[utoipa::path(get, path = "/playlists/{id}/tracks", tag = "playlists",
+    operation_id = "get_published_playlist_tracks", params(Pagination,
+        ("id" = i64, Path, minimum = 1, description = "Playlist ID")),
+    security(("personal_key" = [])), responses(
+        (status = 200, body = PlaylistTrackPage, description = "Track page"),
+        (status = 400, response = ErrorResponse),
+        (status = 401, response = ErrorResponse),
+        (status = 404, response = ErrorResponse),
+        (status = 500, response = ErrorResponse)
+    ))]
+async fn get_published_tracks(
+    _user: CurrentUser,
+    State(pool): State<SqlitePool>,
+    id: Result<Path<i64>, PathRejection>,
+    query: Result<Query<Pagination>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let id = playlist_id(id)?;
+    let page = pagination(query)?;
+    let snapshot =
+        db::playlists::published_tracks(&pool, id, page.limit, page.offset)
+            .await
+            .map_err(playlist_error)?;
+    Ok(private(Json(PlaylistTrackPage {
+        version: snapshot.version,
+        items: snapshot.items,
+        limit: page.limit,
+        offset: page.offset,
+    })))
+}
+
 /// Validate body versions separately from malformed query preconditions.
 fn version(version: i64) -> Result<(), ApiError> {
     if version <= 0 {
@@ -364,7 +493,7 @@ fn playlist_error(error: db::playlists::PlaylistError) -> ApiError {
     }
 }
 
-/// Personal playlist responses must not enter browser or shared caches.
+/// Authenticated playlist responses must not enter browser or shared caches.
 fn private(value: impl IntoResponse) -> Response {
     let mut response = value.into_response();
     response.headers_mut().insert(
@@ -376,8 +505,7 @@ fn private(value: impl IntoResponse) -> Response {
 
 #[cfg(test)]
 mod tests {
-    //! Private playlist HTTP contracts with real credentials and migrated
-    //! SQLite.
+    //! Playlist ownership and publication contracts with real credentials.
 
     use super::*;
     use axum::{
@@ -507,6 +635,407 @@ mod tests {
         ) -> (u16, HeaderMap, Value) {
             request(&self.app, method, path, Some(&self.alice), value).await
         }
+    }
+
+    /// Published reads never grant other accounts editing rights.
+    #[tokio::test]
+    async fn publishes_read_only_playlists_and_revokes_new_reads_immediately()
+    {
+        let fixture = Fixture::new().await;
+        let charlie = crate::auth::token().unwrap();
+        db::users::create(
+            &fixture.pool,
+            "charlie",
+            &crate::auth::digest(&charlie),
+        )
+        .await
+        .unwrap();
+        fixture
+            .alice(
+                "POST",
+                "/api/v1/me/playlists",
+                Some(json!({"name":"For friends"})),
+            )
+            .await;
+        let owned = "/api/v1/me/playlists/1";
+        let tracks = "/api/v1/me/playlists/1/tracks";
+        let visibility = "/api/v1/me/playlists/1/visibility";
+        let published = "/api/v1/playlists/1";
+        fixture
+            .alice(
+                "PUT",
+                tracks,
+                Some(json!({
+                    "version":1,"recording_ids":[1,2,1]
+                })),
+            )
+            .await;
+        assert!(
+            !fixture.alice("GET", owned, None).await.2["is_public"]
+                .as_bool()
+                .unwrap()
+        );
+        assert_eq!(fixture.alice("GET", published, None).await.0, 404);
+        let shared = request(
+            &fixture.app,
+            "PUT",
+            visibility,
+            Some(&fixture.session),
+            Some(json!({"version":2,"is_public":true})),
+        )
+        .await;
+        assert_eq!(shared.0, 200);
+        assert_eq!(shared.2["version"], 3);
+        assert_eq!(shared.2["is_public"], true);
+        assert_eq!(
+            fixture
+                .alice(
+                    "PUT",
+                    visibility,
+                    Some(json!({"version":3,"is_public":true}))
+                )
+                .await
+                .2,
+            shared.2
+        );
+        assert_eq!(
+            fixture
+                .alice(
+                    "PUT",
+                    visibility,
+                    Some(json!({"version":2,"is_public":false}))
+                )
+                .await
+                .0,
+            409
+        );
+        let renamed = fixture
+            .alice(
+                "PUT",
+                owned,
+                Some(json!({"version":3,"name":"Shared mix"})),
+            )
+            .await;
+        assert_eq!(renamed.2["is_public"], true);
+        assert_eq!(renamed.2["version"], 4);
+        fixture
+            .alice(
+                "POST",
+                "/api/v1/me/playlists",
+                Some(json!({"name":"Still private"})),
+            )
+            .await;
+        for token in [&fixture.bob, &charlie] {
+            let response =
+                request(&fixture.app, "GET", published, Some(token), None)
+                    .await;
+            assert_eq!(response.0, 200);
+            assert_eq!(response.2, renamed.2);
+            assert_eq!(response.1[header::CACHE_CONTROL], "private, no-store");
+            assert!(response.2.get("user_id").is_none());
+            let page = request(
+                &fixture.app,
+                "GET",
+                "/api/v1/playlists/1/tracks?limit=2&offset=1",
+                Some(token),
+                None,
+            )
+            .await;
+            assert_eq!(
+                page.2,
+                json!({"version":4,"limit":2,"offset":1,"items":[
+                    {"position":2,"recording_id":2,"title":"Two"},
+                    {"position":3,"recording_id":1,"title":"One"}
+                ]})
+            );
+            for (method, path, body) in [
+                ("PUT", owned, Some(json!({"version":4,"name":"Take"}))),
+                ("DELETE", "/api/v1/me/playlists/1?version=4", None),
+                ("PUT", tracks, Some(json!({"version":4,"recording_ids":[]}))),
+                (
+                    "PUT",
+                    visibility,
+                    Some(json!({"version":4,"is_public":false})),
+                ),
+            ] {
+                assert_eq!(
+                    request(&fixture.app, method, path, Some(token), body)
+                        .await
+                        .0,
+                    404
+                );
+            }
+            for method in ["POST", "PUT", "DELETE"] {
+                assert_eq!(
+                    request(
+                        &fixture.app,
+                        method,
+                        published,
+                        Some(token),
+                        None
+                    )
+                    .await
+                    .0,
+                    405
+                );
+            }
+        }
+        let catalog = request(
+            &fixture.app,
+            "GET",
+            "/api/v1/playlists",
+            Some(&charlie),
+            None,
+        )
+        .await;
+        assert_eq!(catalog.2["items"], json!([renamed.2]));
+        assert_eq!(fixture.alice("GET", "/api/v1/me/playlists", None)
+            .await.2["items"].as_array().unwrap().len(), 2);
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/me/playlists",
+            Some(&fixture.bob),
+            Some(json!({"name":"Bob's public mix"})),
+        )
+        .await;
+        request(
+            &fixture.app,
+            "PUT",
+            "/api/v1/me/playlists/3/visibility",
+            Some(&fixture.bob),
+            Some(json!({"version":1,"is_public":true})),
+        )
+        .await;
+        let page = request(
+            &fixture.app,
+            "GET",
+            "/api/v1/playlists?limit=1&offset=1",
+            Some(&charlie),
+            None,
+        )
+        .await;
+        assert_eq!(page.2["items"][0]["id"], 3);
+        assert_eq!(
+            fixture
+                .alice(
+                    "PUT",
+                    visibility,
+                    Some(json!({"version":4,"is_public":false}))
+                )
+                .await
+                .2["version"],
+            5
+        );
+        for token in [&fixture.alice, &fixture.bob, &charlie] {
+            for path in [published, "/api/v1/playlists/1/tracks"] {
+                assert_eq!(
+                    request(&fixture.app, "GET", path, Some(token), None)
+                        .await
+                        .0,
+                    404
+                );
+            }
+        }
+        assert_eq!(
+            fixture.alice("GET", tracks, None).await.2["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        fixture
+            .alice(
+                "PUT",
+                visibility,
+                Some(json!({"version":5,"is_public":true})),
+            )
+            .await;
+        assert_eq!(
+            fixture
+                .alice(
+                    "PUT",
+                    tracks,
+                    Some(json!({"version":6,"recording_ids":[2,1]}))
+                )
+                .await
+                .2["is_public"],
+            true
+        );
+        let page = request(
+            &fixture.app,
+            "GET",
+            "/api/v1/playlists/1/tracks",
+            Some(&charlie),
+            None,
+        )
+        .await;
+        assert_eq!(page.2["version"], 7);
+        assert_eq!(page.2["items"][0]["recording_id"], 2);
+        assert_eq!(
+            fixture
+                .alice("DELETE", "/api/v1/me/playlists/1?version=7", None)
+                .await
+                .0,
+            204
+        );
+        assert_eq!(
+            request(&fixture.app, "GET", published, Some(&charlie), None)
+                .await
+                .0,
+            404
+        );
+        db::users::revoke(&fixture.pool, "charlie").await.unwrap();
+        assert_eq!(
+            request(
+                &fixture.app,
+                "GET",
+                "/api/v1/playlists",
+                Some(&charlie),
+                None
+            )
+            .await
+            .0,
+            401
+        );
+        fixture.pool.close().await;
+    }
+
+    /// Shared reads require auth; visibility requires an explicit boolean.
+    #[tokio::test]
+    async fn validates_visibility_and_keeps_private_data_hidden() {
+        let fixture = Fixture::new().await;
+        fixture
+            .alice(
+                "POST",
+                "/api/v1/me/playlists",
+                Some(json!({"name":"Private"})),
+            )
+            .await;
+        let url = "/api/v1/me/playlists/1/visibility";
+        for (method, path) in [
+            ("GET", "/api/v1/playlists?limit=bad"),
+            ("GET", "/api/v1/playlists/x"),
+            ("HEAD", "/api/v1/playlists/x/tracks"),
+            ("PUT", "/api/v1/me/playlists/x/visibility"),
+        ] {
+            let response =
+                request(&fixture.app, method, path, None, Some(json!({})))
+                    .await;
+            assert_eq!(response.0, 401);
+            assert_eq!(response.1[header::WWW_AUTHENTICATE], "Bearer");
+        }
+        for body in [
+            json!({}),
+            json!({"version":1}),
+            json!({"version":1,"is_public":null}),
+            json!({"version":1,"is_public":"true"}),
+            json!({"version":0,"is_public":true}),
+            json!({"version":1,"is_public":true,"user_id":2}),
+            json!({"version":1,"public":true}),
+        ] {
+            assert_eq!(fixture.alice("PUT", url, Some(body)).await.0, 422);
+        }
+        assert_eq!(fixture.alice("PUT", url, None).await.0, 415);
+        for id in ["0", "-1", "invalid"] {
+            assert_eq!(
+                fixture
+                    .alice(
+                        "PUT",
+                        &format!("/api/v1/me/playlists/{id}/visibility"),
+                        Some(json!({"version":1,"is_public":true}))
+                    )
+                    .await
+                    .0,
+                400
+            );
+            assert_eq!(
+                fixture
+                    .alice("GET", &format!("/api/v1/playlists/{id}"), None)
+                    .await
+                    .0,
+                400
+            );
+        }
+        assert_eq!(
+            fixture
+                .alice(
+                    "PUT",
+                    "/api/v1/me/playlists/999/visibility",
+                    Some(json!({"version":1,"is_public":true}))
+                )
+                .await
+                .0,
+            404
+        );
+        assert_eq!(
+            fixture
+                .alice(
+                    "PUT",
+                    url,
+                    Some(json!({"version":99,"is_public":true}))
+                )
+                .await
+                .0,
+            409
+        );
+        assert_eq!(
+            fixture
+                .alice(
+                    "POST",
+                    "/api/v1/me/playlists",
+                    Some(
+                        json!({"name":"No implicit publish","is_public":true})
+                    )
+                )
+                .await
+                .0,
+            422
+        );
+        assert_eq!(
+            fixture
+                .alice(
+                    "PUT",
+                    "/api/v1/me/playlists/1",
+                    Some(
+                        json!({"version":1,"name":"Private","is_public":true})
+                    )
+                )
+                .await
+                .0,
+            422
+        );
+        for query in [
+            "limit=0",
+            "limit=101",
+            "offset=-1",
+            "user_id=1",
+            "is_public=false",
+        ] {
+            assert_eq!(
+                fixture
+                    .alice("GET", &format!("/api/v1/playlists?{query}"), None)
+                    .await
+                    .0,
+                400
+            );
+        }
+        for path in [
+            "/api/v1/playlists/1",
+            "/api/v1/playlists/1/tracks",
+            "/api/v1/playlists/999",
+            "/api/v1/playlists/999/tracks",
+        ] {
+            assert_eq!(fixture.alice("GET", path, None).await.0, 404);
+        }
+        assert_eq!(
+            fixture.alice("GET", "/api/v1/playlists", None).await.2["items"],
+            json!([])
+        );
+        let owned = fixture.alice("GET", "/api/v1/me/playlists/1", None).await;
+        assert_eq!(owned.2["version"], 1);
+        assert_eq!(owned.2["is_public"], false);
+        fixture.pool.close().await;
     }
 
     /// Duplicates, reorders, edits and deletion stay separate from favorites.
@@ -896,7 +1425,30 @@ mod tests {
                 assert!(operation["responses"]["401"].is_object());
             }
         }
-        assert_eq!(count, 7);
+        assert_eq!(count, 8);
+        for path in [
+            "/api/v1/playlists",
+            "/api/v1/playlists/{id}",
+            "/api/v1/playlists/{id}/tracks",
+        ] {
+            assert!(
+                schema["paths"][path]["get"]["security"][0]["personal_key"]
+                    .is_array()
+            );
+            assert!(
+                schema["paths"][path]["get"]["responses"]["401"].is_object()
+            );
+            assert!(schema["paths"][path].get("put").is_none());
+            assert!(schema["paths"][path].get("delete").is_none());
+        }
+        let visibility = &schema["components"]["schemas"]["SetVisibility"];
+        assert_eq!(visibility["properties"]["is_public"]["type"], "boolean");
+        assert!(
+            visibility["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("is_public"))
+        );
         let models = &schema["components"]["schemas"];
         assert_eq!(
             models["ReplaceTracks"]["properties"]["recording_ids"]["maxItems"],

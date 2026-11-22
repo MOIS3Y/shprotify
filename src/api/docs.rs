@@ -39,7 +39,7 @@ Internal failure details are logged on the server and never returned.
 HEAD responses have no body, including error responses."
     ),
     tags(
-        (name = "playlists", description = "Private ordered playlists"),
+        (name = "playlists", description = "Owned and published playlists"),
         (name = "history", description = "Personal playback history"),
         (name = "users", description = "Administrative account management"),
         (name = "auth", description = "Password login and session logout"),
@@ -210,7 +210,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 34);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 38);
         assert!(schema["paths"].get("/health").is_none());
     }
 
