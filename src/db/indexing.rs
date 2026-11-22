@@ -1,11 +1,9 @@
 //! Atomic file indexing with conservative, directory-local tag associations.
 //!
-//! New paths get independent recordings. Existing paths retain all catalog
+//! New paths reuse explicit source IDs or create recordings. Known paths keep
 //! identities and curated metadata; only measured file properties and source
 //! tags are refreshed. Missing files are never removed by this importer.
 //! New recordings receive local source associations through `matching`.
-
-use std::path::Path;
 
 use sqlx::SqlitePool;
 
@@ -13,7 +11,6 @@ use crate::library::{
     audio_files::NewAudioFile,
     file_state::FileState,
     metadata::{AudioTags, ScannedFile},
-    recordings::NewRecording,
 };
 
 /// Invalid source metadata can be isolated; storage failures stop the job.
@@ -55,29 +52,28 @@ pub(crate) async fn store(
     let file_id = match existing {
         Some(id) => id,
         None => {
-            let fallback = Path::new(&input.path)
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Untitled");
-            let title = source
-                .tags
-                .title
-                .as_deref()
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or(fallback);
-            let recording = NewRecording::new(title, vec![])
-                .map_err(IndexError::Invalid)?;
-            let recording_id: i64 = sqlx::query_scalar(
-                "INSERT INTO recordings (title) VALUES (?) RETURNING id",
-            )
-            .bind(recording.title)
-            .fetch_one(&mut *transaction)
-            .await?;
+            let (recording_id, created, issue) =
+                super::recording_matches::resolve(
+                    &mut transaction,
+                    &input.path,
+                    &source.tags,
+                )
+                .await?;
+            if let Some(message) = issue {
+                super::scans::record_error_in(
+                    &mut transaction,
+                    scan_id,
+                    &input.path,
+                    message,
+                )
+                .await?;
+            }
             if let Some(message) = super::matching::attach(
                 &mut transaction,
                 recording_id,
                 &input.path,
                 &source.tags,
+                created,
             )
             .await?
             {
@@ -218,6 +214,7 @@ mod tests {
     //! Path identity, curated metadata preservation, and transaction rollback.
 
     use super::*;
+    use crate::library::recordings::NewRecording;
     use crate::{db, library::audio_files::AudioProperties};
 
     /// Build source observations independently of filesystem/probe behavior.

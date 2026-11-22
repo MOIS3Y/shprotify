@@ -9,6 +9,7 @@ pub(crate) mod audio_files;
 pub(crate) mod duplicates;
 pub(crate) mod indexing;
 mod matching;
+mod recording_matches;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
@@ -138,7 +139,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         pool.close().await;
     }
 

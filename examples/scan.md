@@ -137,7 +137,8 @@ JSON Lines format does not include internal filesystem observations.
 
 ### Catalog matching policy
 
-Paths identify physical files. A new path creates an independent recording
+Paths identify physical files. Without a matching explicit identity, a new
+path creates an independent recording
 and its file atomically. The recording title comes from the embedded title,
 trimmed and validated; a missing/blank title falls back to the filename stem.
 Invalid new titles reject that file rather than silently truncating metadata.
@@ -200,3 +201,26 @@ registration never observed by background indexing. The read-only CLI does
 not persist observations. Scans never remove catalog entries for missing files
 or move, rename, write, or delete collection files. Global musical identity
 matching and cross-format duplicate detection remain future work.
+
+### Alternate encodings with explicit recording identities
+
+The optional `recording_mbid` source tag exposes MusicBrainz Recording ID.
+For new paths, one valid UUID-shaped recording ID reuses the scanner-owned
+recording mapped to that ID, across formats and directories. UUID hex case
+and surrounding whitespace are normalized; names/durations never establish
+identity. Recording IDs are distinct from MusicBrainz release-track IDs.
+
+The first file creates the recording and credits. Further encodings keep its
+curated title and credits and store their own paths, properties, tags, and
+hashes. Release associations still follow directory-local rules. An occupied
+slot already pointing to the same recording is accepted without an issue.
+Different releases can reference the shared recording at different positions.
+
+Absent IDs keep files independent. Malformed, nil, or multiple IDs produce an
+issue but still import an independent recording and file. Identity mappings
+commit atomically with file metadata and survive restarts. Existing paths,
+manual registrations, and legacy imports retain their links even if later
+source tags change; no existing recordings are merged or backfilled.
+
+This policy trusts explicit source tags; it does not verify remote MusicBrainz
+entities or compare decoded audio. Acoustic matching is future work.

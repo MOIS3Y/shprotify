@@ -77,7 +77,7 @@ struct ScanErrorPage {
 /// Start indexing all configured roots outside the HTTP request.
 ///
 /// No body is required. Roots come exclusively from server configuration.
-/// New paths create separate recordings. Known paths preserve curated catalog
+/// New paths may share explicit recording IDs. Known paths preserve catalog
 /// metadata while refreshing properties/source tags. One scan runs at a time;
 /// admission is persisted.
 /// New-file artist/release tags match within the immediate parent directory.

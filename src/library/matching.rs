@@ -61,11 +61,57 @@ fn optional_text(
         .transpose()
 }
 
+/// Normalize one explicit UUID-shaped recording ID; never infer it from names.
+///
+/// Blank values mean unknown. URLs, lists, nil IDs, and malformed values are
+/// rejected; this checks syntax, not existence in an external catalog.
+pub(crate) fn recording_id(
+    value: Option<&str>,
+) -> Result<Option<String>, &'static str> {
+    let Some(value) = value.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let valid = value.len() == 36
+        && value.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        });
+    if !valid || value.bytes().all(|b| b == b'0' || b == b'-') {
+        return Err("Invalid source MusicBrainz recording ID");
+    }
+    Ok(Some(value.to_ascii_lowercase()))
+}
+
 #[cfg(test)]
 mod tests {
     //! Missing values, exact credits, Unicode boundaries, and invalid numbers.
 
     use super::*;
+
+    /// Identity syntax is exact; only whitespace and hex case are normalized.
+    #[test]
+    fn validates_explicit_recording_ids() {
+        let id = "ebf79ba5-085e-48d2-9eb8-2d992fbf0f6d";
+        assert_eq!(
+            recording_id(Some(&format!(" {} ", id.to_uppercase())))
+                .unwrap()
+                .as_deref(),
+            Some(id)
+        );
+        assert!(recording_id(None).unwrap().is_none());
+        assert!(recording_id(Some(" ")).unwrap().is_none());
+        for invalid in [
+            "name",
+            "00000000-0000-0000-0000-000000000000",
+            "https://musicbrainz.org/recording/id",
+            "ebf79ba5_085e-48d2-9eb8-2d992fbf0f6d",
+        ] {
+            assert!(recording_id(Some(invalid)).is_err());
+        }
+    }
 
     /// Only surrounding whitespace changes; compound credits stay intact.
     #[test]

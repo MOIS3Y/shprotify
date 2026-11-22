@@ -16,11 +16,13 @@ use crate::library::{matching::MatchingTags, metadata::AudioTags};
 /// Invalid matching tags leave associations absent. Occupied track positions
 /// leave that track unlinked, preserving the new file and performer credit.
 /// The returned issue must be persisted by the caller in the same transaction.
+/// Reused recordings retain their credits; only new recordings receive them.
 pub(super) async fn attach(
     connection: &mut SqliteConnection,
     recording_id: i64,
     path: &str,
     source: &AudioTags,
+    new_recording: bool,
 ) -> Result<Option<&'static str>, sqlx::Error> {
     let tags = match MatchingTags::parse(source) {
         Ok(tags) => tags,
@@ -30,7 +32,7 @@ pub(super) async fn attach(
     else {
         return Ok(Some("Cannot determine the source album directory"));
     };
-    if let Some(name) = &tags.artist {
+    if let Some(name) = tags.artist.as_ref().filter(|_| new_recording) {
         let id = artist(connection, directory, name).await?;
         sqlx::query(
             "INSERT INTO recording_artists \
@@ -58,9 +60,21 @@ pub(super) async fn attach(
         .bind(recording_id)
         .bind(i64::from(tags.disc))
         .bind(i64::from(position))
-        .execute(connection)
+        .execute(&mut *connection)
         .await?;
         if inserted.rows_affected() == 0 {
+            let occupied: i64 = sqlx::query_scalar(
+                "SELECT recording_id FROM release_tracks \
+                 WHERE release_id = ? AND disc_number = ? AND position = ?",
+            )
+            .bind(release_id)
+            .bind(i64::from(tags.disc))
+            .bind(i64::from(position))
+            .fetch_one(connection)
+            .await?;
+            if occupied == recording_id {
+                return Ok(None);
+            }
             return Ok(Some(
                 "Source release track position is occupied; \
                 file imported without a release track",
@@ -196,6 +210,123 @@ mod tests {
             },
             properties: AudioProperties::default(),
         }
+    }
+
+    /// Different containers with explicit identity share one recording/slot.
+    #[tokio::test]
+    async fn links_formats_by_explicit_identity_without_rewriting_credits() {
+        let (directory, pool, job) = setup().await;
+        let id = "ebf79ba5-085e-48d2-9eb8-2d992fbf0f6d";
+        let mut first = source("/music/album/one.flac", Some(1));
+        first.tags.recording_mbid = Some(id.into());
+        db::indexing::store(&pool, job, first).await.unwrap();
+        sqlx::query("UPDATE recordings SET title = 'Curated title'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        let pool = db::connect(&directory.path().join("catalog.db"))
+            .await
+            .unwrap();
+        let mut second = source("/music/album/one.mp3", Some(1));
+        second.format = "mp3".into();
+        second.tags.recording_mbid = Some(id.to_uppercase());
+        second.tags.artist = Some("Different source credit".into());
+        db::indexing::store(&pool, job, second).await.unwrap();
+        let counts: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM recordings), \
+             (SELECT COUNT(*) FROM audio_files), \
+             (SELECT COUNT(*) FROM release_tracks)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(counts, (1, 2, 1));
+        let recordings = db::recordings::list(&pool, 50, 0).await.unwrap();
+        assert_eq!(recordings[0].title, "Curated title");
+        let artist = db::artists::find(&pool, recordings[0].artist_ids[0])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(artist.name, "Singer");
+        assert_eq!(
+            db::scans::find(&pool, job).await.unwrap().unwrap().errors,
+            0
+        );
+        let mut other = source("/other/release/track.flac", Some(4));
+        other.tags.recording_mbid = Some(id.into());
+        db::indexing::store(&pool, job, other).await.unwrap();
+        assert_eq!(db::recordings::list(&pool, 50, 0).await.unwrap().len(), 1);
+        assert_eq!(db::releases::list(&pool, 50, 0).await.unwrap().len(), 2);
+        pool.close().await;
+    }
+
+    /// Equal titles do not override distinct IDs or links of known paths.
+    #[tokio::test]
+    async fn distinct_identities_and_known_path_links_are_preserved() {
+        let (_directory, pool, job) = setup().await;
+        let a = "ebf79ba5-085e-48d2-9eb8-2d992fbf0f6d";
+        let b = "0383dadf-2a4e-4d10-a46a-e9e041da8eb3";
+        for (path, id) in [("/a.flac", a), ("/b.mp3", b)] {
+            let mut file = source(path, None);
+            file.tags.recording_mbid = Some(id.into());
+            db::indexing::store(&pool, job, file).await.unwrap();
+        }
+        let before: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT path, recording_id FROM audio_files ORDER BY path",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_ne!(before[0].1, before[1].1);
+        let mut changed = source("/b.mp3", None);
+        changed.tags.recording_mbid = Some(a.into());
+        db::indexing::store(&pool, job, changed).await.unwrap();
+        let after: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT path, recording_id FROM audio_files ORDER BY path",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(before, after);
+        pool.close().await;
+    }
+
+    /// Invalid IDs report an issue but do not drop otherwise valid files.
+    #[tokio::test]
+    async fn invalid_recording_identity_keeps_an_independent_file() {
+        let (_directory, pool, job) = setup().await;
+        let mut file = source("/music/song.flac", Some(1));
+        file.tags.recording_mbid = Some("not-an-id".into());
+        db::indexing::store(&pool, job, file).await.unwrap();
+        let job = db::scans::find(&pool, job).await.unwrap().unwrap();
+        assert_eq!(job.imported, 1);
+        assert_eq!(job.errors, 1);
+        pool.close().await;
+    }
+
+    /// Failure after resolving identity rolls back the new identity mapping.
+    #[tokio::test]
+    async fn identity_mapping_rolls_back_with_failed_file() {
+        let (_directory, pool, job) = setup().await;
+        sqlx::query(
+            "CREATE TRIGGER reject_file BEFORE INSERT ON audio_files \
+            BEGIN SELECT RAISE(ABORT, 'failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut file = source("/music/song.flac", Some(1));
+        file.tags.recording_mbid =
+            Some("ebf79ba5-085e-48d2-9eb8-2d992fbf0f6d".into());
+        assert!(db::indexing::store(&pool, job, file).await.is_err());
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM scan_recording_matches")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+        pool.close().await;
     }
 
     /// Compilation performers share a release and keep independent credits.

@@ -47,7 +47,7 @@ pub(crate) struct ScanJob {
     pub(crate) roots: Vec<String>,
     /// Whether this job bypasses committed filesystem observations.
     pub(crate) force: bool,
-    /// New files and independent recordings committed so far.
+    /// New file paths committed so far, including alternate encodings.
     pub(crate) imported: i64,
     /// Existing paths whose measured properties and tags were refreshed.
     pub(crate) refreshed: i64,

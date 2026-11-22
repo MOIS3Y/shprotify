@@ -41,6 +41,9 @@ pub(crate) struct ScannedFile {
 /// Common source tags; missing tags are represented explicitly as null.
 #[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
 pub(crate) struct AudioTags {
+    /// Explicit MusicBrainz recording identity, preserved as written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) recording_mbid: Option<String>,
     /// Recording title, if embedded.
     pub(crate) title: Option<String>,
     /// Artist credit as written in the selected tag, without splitting names.
@@ -87,6 +90,7 @@ pub(crate) fn read(path: &Path) -> Result<Option<ScannedFile>> {
     let audio = probe.read().context("Cannot read audio metadata")?;
     let tags = audio.primary_tag().or_else(|| audio.first_tag());
     let tags = tags.map_or_else(AudioTags::default, |tag| AudioTags {
+        recording_mbid: recording_identity(tag),
         title: tag.title().map(|value| value.into_owned()),
         artist: tag.artist().map(|value| value.into_owned()),
         album: tag.album().map(|value| value.into_owned()),
@@ -126,6 +130,17 @@ pub(crate) fn read(path: &Path) -> Result<Option<ScannedFile>> {
                 .filter(|value| *value > 0),
         },
     }))
+}
+
+/// Keep multiple ID values as an invalid list instead of silently picking one.
+fn recording_identity(tag: &lofty::tag::Tag) -> Option<String> {
+    let values: Vec<_> =
+        tag.get_strings(ItemKey::MusicBrainzRecordingId).collect();
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join("; "))
+    }
 }
 
 /// Hash every source byte in bounded memory, starting before the audio header.
