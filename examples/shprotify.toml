@@ -25,6 +25,7 @@ path = "dev/shprotify.db"
 # Scanning is explicit; normal server startup only validates these roots.
 # POST /api/v1/library/scans starts background indexing into the catalog.
 # Existing paths keep their recording; measured properties/tags are refreshed.
+# New files match artist/release tags within their immediate parent directory.
 # See examples/scan.md for the import policy and persisted job reports.
 directories = []
 # Example: directories = ["dev/music", "/mnt/music archive"]

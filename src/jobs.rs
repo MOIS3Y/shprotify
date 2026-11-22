@@ -45,7 +45,7 @@ pub(crate) struct ScanJob {
     pub(crate) refreshed: i64,
     /// Unsupported entries; final count becomes available on completion.
     pub(crate) skipped: i64,
-    /// Persisted per-entry errors; other entries continue to be processed.
+    /// Entry errors and matching issues; an imported file can have an issue.
     pub(crate) errors: i64,
     /// UTC creation time in SQLite's `YYYY-MM-DD HH:MM:SS` format.
     pub(crate) created_at: String,
@@ -62,7 +62,7 @@ pub(crate) struct ScanIssue {
     pub(crate) id: i64,
     /// Source path, displayed lossily if its bytes are not UTF-8.
     pub(crate) path: String,
-    /// Filesystem/probe diagnostic or safe catalog validation message.
+    /// Filesystem/probe diagnostic, validation, or association issue.
     pub(crate) message: String,
 }
 

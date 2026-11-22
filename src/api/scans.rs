@@ -56,7 +56,7 @@ struct ScanPage {
 /// Bounded per-entry error report in ascending issue ID order.
 #[derive(Serialize, ToSchema)]
 struct ScanErrorPage {
-    /// Filesystem/probe errors and invalid catalog metadata.
+    /// Per-file failures and nonfatal association issues.
     items: Vec<ScanIssue>,
     /// Effective maximum page size.
     limit: i64,
@@ -67,9 +67,11 @@ struct ScanErrorPage {
 /// Start indexing all configured roots outside the HTTP request.
 ///
 /// No body is required. Roots come exclusively from server configuration.
-/// New paths create separate recordings; matching names do not merge musical
-/// identities. Known paths preserve curated catalog metadata while refreshing
-/// properties/source tags. One scan runs at a time; admission is persisted.
+/// New paths create separate recordings. Known paths preserve curated catalog
+/// metadata while refreshing properties/source tags. One scan runs at a time;
+/// admission is persisted.
+/// New-file artist/release tags match within the immediate parent directory.
+/// Occupied track positions are reported without discarding imported files.
 #[utoipa::path(
     post, path = "/library/scans", tag = "library_scans",
     operation_id = "start_library_scan",
@@ -148,7 +150,7 @@ async fn list_scans(
     }))
 }
 
-/// Read a bounded error page without exposing fatal SQL/worker diagnostics.
+/// Read file errors and matching issues without exposing SQL diagnostics.
 #[utoipa::path(
     get, path = "/library/scans/{id}/errors", tag = "library_scans",
     operation_id = "list_library_scan_errors", params(Pagination,
@@ -277,6 +279,20 @@ mod tests {
         assert_eq!(tags["title"], "Source title");
         assert_eq!(tags["artist"], "Source artist");
         assert_eq!(tags["track_number"], 7);
+        let (_, _, releases) = request(&app, "GET", "/api/v1/releases").await;
+        assert_eq!(releases["items"].as_array().unwrap().len(), 1);
+        let release = &releases["items"][0];
+        assert_eq!(release["title"], "Source album");
+        assert_eq!(release["artist_ids"], json!([]));
+        let (_, _, tracks) = request(
+            &app,
+            "GET",
+            &format!("/api/v1/releases/{}/tracks", release["id"],),
+        )
+        .await;
+        assert_eq!(tracks["items"][0]["recording_id"], recording);
+        assert_eq!(tracks["items"][0]["position"], 7);
+        assert_eq!(tracks["items"][0]["disc_number"], 1);
         let wrong =
             format!("/api/v1/recordings/{}/files/{file}/tags", recording + 1);
         assert_eq!(

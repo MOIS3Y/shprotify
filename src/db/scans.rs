@@ -80,6 +80,17 @@ pub(crate) async fn record_error(
     message: &str,
 ) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
+    record_error_in(&mut transaction, id, path, message).await?;
+    transaction.commit().await
+}
+
+/// Persist an issue and its counter inside an existing indexing transaction.
+pub(super) async fn record_error_in(
+    connection: &mut sqlx::SqliteConnection,
+    id: i64,
+    path: &str,
+    message: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO library_scan_errors (scan_id, path, message) \
          VALUES (?, ?, ?)",
@@ -87,13 +98,13 @@ pub(crate) async fn record_error(
     .bind(id)
     .bind(path)
     .bind(message)
-    .execute(&mut *transaction)
+    .execute(&mut *connection)
     .await?;
     sqlx::query("UPDATE library_scans SET errors = errors + 1 WHERE id = ?")
         .bind(id)
-        .execute(&mut *transaction)
+        .execute(connection)
         .await?;
-    transaction.commit().await
+    Ok(())
 }
 
 /// Read one job's error page; the HTTP layer separately checks job existence.

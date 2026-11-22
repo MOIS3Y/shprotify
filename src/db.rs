@@ -7,6 +7,7 @@
 pub(crate) mod artists;
 pub(crate) mod audio_files;
 pub(crate) mod indexing;
+mod matching;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
@@ -136,7 +137,87 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7]);
+        pool.close().await;
+    }
+
+    /// New matching tables preserve previously indexed paths and identities.
+    #[tokio::test]
+    async fn upgrades_scan_catalog_without_rewriting_legacy_associations() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("library.db");
+        let previous = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 6)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        sqlx::query("INSERT INTO recordings (id, title) VALUES (1, 'Legacy')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO audio_files (id, recording_id, path, format) \
+            VALUES (1, 1, '/music/legacy.flac', 'flac')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO audio_file_tags (file_id, tags) \
+            VALUES (1, '{\"artist\":\"Source credit\"}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let row: (i64, String) = sqlx::query_as(
+            "SELECT f.recording_id, r.title FROM audio_files f \
+             JOIN recordings r ON r.id = f.recording_id WHERE f.id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row, (1, "Legacy".into()));
+        let matches: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM scan_artist_matches), \
+             (SELECT COUNT(*) FROM scan_release_matches)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(matches, (0, 0));
+        let job = scans::create(&pool, &[]).await.unwrap();
+        indexing::store(
+            &pool,
+            job.id,
+            crate::library::metadata::ScannedFile {
+                path: "/music/legacy.flac".into(),
+                format: "flac".into(),
+                tags: crate::library::metadata::AudioTags {
+                    title: Some("Changed source".into()),
+                    artist: Some("Source credit".into()),
+                    album: Some("Album".into()),
+                    track_number: Some(1),
+                    ..Default::default()
+                },
+                properties: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            recordings::find(&pool, 1)
+                .await
+                .unwrap()
+                .unwrap()
+                .artist_ids
+                .is_empty()
+        );
+        assert!(releases::list(&pool, 50, 0).await.unwrap().is_empty());
         pool.close().await;
     }
 

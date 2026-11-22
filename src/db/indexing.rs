@@ -1,8 +1,9 @@
-//! Atomic path-based indexing without speculative musical identity matching.
+//! Atomic file indexing with conservative, directory-local tag associations.
 //!
 //! New paths get independent recordings. Existing paths retain all catalog
 //! identities and curated metadata; only measured file properties and source
 //! tags are refreshed. Missing files are never removed by this importer.
+//! New recordings receive local source associations through `matching`.
 
 use std::path::Path;
 
@@ -71,6 +72,22 @@ pub(crate) async fn store(
             .bind(recording.title)
             .fetch_one(&mut *transaction)
             .await?;
+            if let Some(message) = super::matching::attach(
+                &mut transaction,
+                recording_id,
+                &input.path,
+                &source.tags,
+            )
+            .await?
+            {
+                super::scans::record_error_in(
+                    &mut transaction,
+                    scan_id,
+                    &input.path,
+                    message,
+                )
+                .await?;
+            }
             sqlx::query_scalar(
                 "INSERT INTO audio_files (recording_id, path, format) \
                  VALUES (?, ?, ?) RETURNING id",
@@ -168,7 +185,7 @@ mod tests {
         }
     }
 
-    /// Equal metadata never merges recordings or creates artist identities.
+    /// Equal titles keep recordings distinct while local credits are reused.
     #[tokio::test]
     async fn indexes_distinct_paths_and_exposes_scoped_source_tags() {
         let directory = tempfile::tempdir().unwrap();
@@ -204,7 +221,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(artists, 0);
+        assert_eq!(artists, 1);
         let job = db::scans::find(&pool, job.id).await.unwrap().unwrap();
         assert_eq!(job.imported, 2);
         assert_eq!(job.refreshed, 0);
@@ -322,6 +339,10 @@ mod tests {
             "SELECT COUNT(*) FROM recordings",
             "SELECT COUNT(*) FROM audio_files",
             "SELECT COUNT(*) FROM audio_file_tags",
+            "SELECT COUNT(*) FROM artists",
+            "SELECT COUNT(*) FROM releases",
+            "SELECT COUNT(*) FROM scan_artist_matches",
+            "SELECT COUNT(*) FROM scan_release_matches",
         ] {
             let count: i64 =
                 sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();

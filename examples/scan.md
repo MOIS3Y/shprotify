@@ -66,7 +66,7 @@ Jobs persist their canonical `roots`, timestamps, `status`, and counters:
 
 - `imported`: new paths committed to the catalog.
 - `refreshed`: existing paths whose measured properties/tags were refreshed.
-- `errors`: isolated filesystem/probe or catalog validation failures.
+- `errors`: filesystem/probe failures, validation errors, and matching issues.
 - `skipped`: unsupported files, symlinks, and special files; available when
   traversal completes.
 
@@ -78,7 +78,7 @@ shutdown waits for accepted work. After a crash/restart, unfinished jobs become
 `interrupted`; history and committed files remain. Jobs are not automatically
 resumed against possibly changed configuration. Start a new scan to retry.
 
-### Initial catalog matching policy
+### Catalog matching policy
 
 Paths identify physical files. A new path creates an independent recording
 and its file atomically. The recording title comes from the embedded title,
@@ -89,11 +89,50 @@ An existing path retains its file ID, recording link, title, artist credits,
 and release membership. Measured file properties and observed source tags are
 refreshed; unavailable measurements replace old declared values with null.
 This also applies to files previously registered manually through the API.
+Files indexed before directory-local matching was introduced are preserved
+the same way: refreshing them does not backfill or rewrite associations. Those
+older rows cannot reliably be distinguished from curated registrations.
 
 Names alone do not identify musical entities: distinct paths are not merged
-because their titles, artist credits, albums, or contents appear equal. Artist,
-release, and track associations are not inferred yet. Original tags remain
-available separately without overriding curated catalog metadata:
+because their titles, artist credits, albums, or contents appear equal.
+For newly imported paths, associations follow these conservative rules:
+
+- A nonblank `artist` supplies one recording credit. Compound names such as
+  `A feat. B` or `A; B` stay intact; no artist names are split.
+- Credits reuse scanner-created artist IDs only within the immediate parent
+  directory and only for exactly equal trimmed source names. Manual artists
+  are not selected by name. There is no case folding or global name matching.
+- A nonblank `album` supplies a release. Releases reuse scanner-created IDs
+  by directory, trimmed album title, and explicit `album_artist` (or its
+  absence). The kind is `other`: an album tag does not identify a release type.
+- Only explicit `album_artist` supplies a release credit. Missing album-artist
+  tags do not fall back to track performers, so compilations can share one
+  release even when individual performers differ. A missing recording artist
+  does not fall back to the album artist either.
+- A release track requires both an album and a positive `track_number`.
+  A missing disc number means disc 1. Missing track numbers are not inferred
+  from filenames or traversal order. Zero track/disc numbers are invalid.
+
+Names/titles are limited to 255 Unicode scalar values without controls. Blank
+matching tags mean absent values. Invalid optional matching metadata skips
+associations for that file, while its recording, file, and original tags are
+still imported. The issue and its counter commit with the file transaction.
+
+An occupied release/disc/track slot keeps its current recording. The new file
+and independent recording still import, with a matching issue explaining the
+missing release-track link. The first discovered file claims an empty slot;
+filesystem iteration order is unspecified. Alternative encodings are not
+automatically merged. A file can therefore contribute to both `imported` and
+`errors`; these counters must not be summed as disjoint outcomes.
+
+The directory boundary separates editions and ambiguous names, including
+different disc subdirectories. It can produce separate artist/release IDs for
+the same music in different directories. Cross-directory identity matching
+and multi-directory release grouping need stronger evidence in later work.
+Persistent source keys remain stable when catalog names are corrected, so new
+files with the original tags reuse those IDs without undoing manual changes.
+
+Original tags remain available without overriding curated catalog metadata:
 
 ```sh
 curl http://127.0.0.1:3000/api/v1/recordings/1/files/1/tags
@@ -102,5 +141,5 @@ curl http://127.0.0.1:3000/api/v1/recordings/1/files/1/tags
 The tag endpoint returns `404` for an unknown/wrongly scoped file or a manual
 registration never observed by background indexing. The read-only CLI does
 not persist observations. Scans never remove catalog entries for missing files
-or move, rename, write, or delete collection files. Musical identity matching,
-duplicate detection, and efficient change detection remain subsequent work.
+or move, rename, write, or delete collection files. Global musical identity
+matching, duplicate detection, and efficient change detection remain future work.
