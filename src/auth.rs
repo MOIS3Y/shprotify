@@ -1,4 +1,6 @@
-//! Personal bearer-key authentication; only credential hashes reach storage.
+//! Bearer authentication for personal keys and expiring password sessions.
+
+pub(crate) mod password;
 
 use crate::{api::error::ApiError, db};
 use axum::{
@@ -44,7 +46,7 @@ pub(crate) struct User {
     pub(crate) role: Role,
 }
 
-/// Principal derived only from an active bearer key, never a supplied user ID.
+/// Principal from an active key or session, never a supplied user ID.
 pub(crate) struct CurrentUser(pub(crate) User);
 
 impl<S> FromRequestParts<S> for CurrentUser
@@ -59,23 +61,7 @@ where
         parts: &mut Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let mut headers = parts.headers.get_all(header::AUTHORIZATION).iter();
-        let value = headers
-            .next()
-            .and_then(|h| h.to_str().ok())
-            .ok_or(ApiError::Unauthorized)?;
-        if headers.next().is_some() {
-            return Err(ApiError::Unauthorized);
-        }
-        let (scheme, token) =
-            value.split_once(' ').ok_or(ApiError::Unauthorized)?;
-        if !scheme.eq_ignore_ascii_case("Bearer")
-            || token.len() != 68
-            || !token.starts_with("shp_")
-            || !token[4..].bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return Err(ApiError::Unauthorized);
-        }
+        let token = bearer(parts)?;
         Ok(Self(
             db::users::authenticate(
                 &SqlitePool::from_ref(state),
@@ -85,6 +71,51 @@ where
             .ok_or(ApiError::Unauthorized)?,
         ))
     }
+}
+
+/// Authenticated session digest; personal keys cannot be logged out.
+pub(crate) struct CurrentSession(pub(crate) String);
+
+impl<S> FromRequestParts<S> for CurrentSession
+where
+    S: Send + Sync,
+    SqlitePool: FromRef<S>,
+{
+    type Rejection = ApiError;
+
+    /// Require an active password session rather than a personal key.
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        if !bearer(parts)?.starts_with("shs_") {
+            return Err(ApiError::Unauthorized);
+        }
+        CurrentUser::from_request_parts(parts, state).await?;
+        Ok(Self(digest(bearer(parts)?)))
+    }
+}
+
+/// Parse exactly one Bearer header without accepting alternate transports.
+fn bearer(parts: &Parts) -> Result<&str, ApiError> {
+    let mut headers = parts.headers.get_all(header::AUTHORIZATION).iter();
+    let value = headers
+        .next()
+        .and_then(|h| h.to_str().ok())
+        .ok_or(ApiError::Unauthorized)?;
+    if headers.next().is_some() {
+        return Err(ApiError::Unauthorized);
+    }
+    let (scheme, token) =
+        value.split_once(' ').ok_or(ApiError::Unauthorized)?;
+    if !scheme.eq_ignore_ascii_case("Bearer")
+        || token.len() != 68
+        || !(token.starts_with("shp_") || token.starts_with("shs_"))
+        || !token[4..].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(ApiError::Unauthorized);
+    }
+    Ok(token)
 }
 
 /// Guard for administrative operations; client role claims are never trusted.
@@ -127,10 +158,20 @@ pub(crate) fn name(value: &str) -> anyhow::Result<String> {
 
 /// Generate a one-time CLI credential containing 256 bits of OS randomness.
 pub(crate) fn token() -> anyhow::Result<String> {
+    random_token("shp_")
+}
+
+/// Generate a session credential with a distinct, non-authoritative prefix.
+pub(crate) fn session_token() -> anyhow::Result<String> {
+    random_token("shs_")
+}
+
+/// Combine a credential kind with 256 bits of operating system randomness.
+fn random_token(prefix: &str) -> anyhow::Result<String> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes)
         .map_err(|_| anyhow::anyhow!("OS randomness is unavailable"))?;
-    Ok(format!("shp_{}", hex(&bytes)))
+    Ok(format!("{prefix}{}", hex(&bytes)))
 }
 
 /// Hash a credential before persistence or lookup.

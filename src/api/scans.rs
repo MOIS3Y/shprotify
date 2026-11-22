@@ -292,8 +292,12 @@ mod tests {
             .await
             .unwrap();
         let service = ScanService::new(pool.clone(), vec![music]);
-        let app =
-            crate::api::router(&DocsConfig::default(), &pool, service.clone());
+        let app = crate::api::router(
+            &crate::config::AuthConfig::default(),
+            &DocsConfig::default(),
+            &pool,
+            service.clone(),
+        );
         let app = crate::api::tests::with_admin(app, &pool).await;
         let path = "/api/v1/library/scans";
         let (status, _, empty) = request(&app, "GET", path).await;
@@ -364,8 +368,12 @@ mod tests {
             .await
             .unwrap();
         let service = ScanService::new(pool.clone(), vec![]);
-        let app =
-            crate::api::router(&DocsConfig::default(), &pool, service.clone());
+        let app = crate::api::router(
+            &crate::config::AuthConfig::default(),
+            &DocsConfig::default(),
+            &pool,
+            service.clone(),
+        );
         let app = crate::api::tests::with_admin(app, &pool).await;
         let active = db::scans::create(&pool, &[], false).await.unwrap();
         let path = "/api/v1/library/scans";
@@ -418,8 +426,12 @@ mod tests {
     async fn documents_scan_and_observed_tag_contracts() {
         let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let service = ScanService::new(pool.clone(), vec![]);
-        let app =
-            crate::api::router(&DocsConfig { enabled: true }, &pool, service);
+        let app = crate::api::router(
+            &crate::config::AuthConfig::default(),
+            &DocsConfig { enabled: true },
+            &pool,
+            service,
+        );
         let (_, _, schema) = request(&app, "GET", "/openapi.json").await;
         let post = &schema["paths"]["/api/v1/library/scans"]["post"];
         assert!(post["responses"]["202"]["headers"]["Location"].is_object());
@@ -469,6 +481,7 @@ mod tests {
         ] {
             let service = ScanService::new(pool.clone(), vec![music.clone()]);
             let app = crate::api::router(
+                &crate::config::AuthConfig::default(),
                 &DocsConfig::default(),
                 &pool,
                 service.clone(),

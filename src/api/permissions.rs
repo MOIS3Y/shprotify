@@ -69,6 +69,7 @@ async fn enforces_the_complete_shared_operation_policy() {
     .unwrap();
     let service = crate::jobs::ScanService::new(pool.clone(), vec![]);
     let app = super::router(
+        &crate::config::AuthConfig::default(),
         &crate::config::DocsConfig { enabled: true },
         &pool,
         service.clone(),
@@ -240,6 +241,7 @@ async fn enforces_the_complete_shared_operation_policy() {
 async fn schema_documents_every_administrative_operation() {
     let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
     let app = super::router(
+        &crate::config::AuthConfig::default(),
         &crate::config::DocsConfig { enabled: true },
         &pool,
         crate::jobs::ScanService::new(pool.clone(), vec![]),

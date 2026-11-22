@@ -14,6 +14,7 @@ mod release_tracks;
 mod releases;
 mod scans;
 mod search;
+mod sessions;
 
 use axum::{Json, Router};
 use serde::Serialize;
@@ -31,12 +32,14 @@ use self::error::ApiError;
 /// Version-local paths are nested once under `/api/v1` for both HTTP routing
 /// and OpenAPI. Documentation routes are attached at the application root.
 pub(crate) fn router(
+    auth: &crate::config::AuthConfig,
     config: &DocsConfig,
     pool: &sqlx::SqlitePool,
     scans: ScanService,
 ) -> Router {
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
+        .merge(sessions::router(pool.clone(), *auth))
         .merge(personal::router(pool.clone()))
         .merge(artists::router(pool.clone()))
         .merge(releases::router(pool.clone()))
@@ -132,6 +135,7 @@ pub(crate) mod tests {
     /// Build the default router with all documentation routes disabled.
     fn router() -> Router {
         super::router(
+            &crate::config::AuthConfig::default(),
             &DocsConfig::default(),
             &test_pool(),
             ScanService::new(test_pool(), vec![]),
@@ -281,6 +285,7 @@ pub(crate) mod tests {
     async fn unversioned_and_unknown_api_paths_return_json_not_found() {
         for enabled in [false, true] {
             let app = super::router(
+                &crate::config::AuthConfig::default(),
                 &DocsConfig { enabled },
                 &test_pool(),
                 ScanService::new(test_pool(), vec![]),

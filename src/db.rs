@@ -16,6 +16,7 @@ pub(crate) mod release_tracks;
 pub(crate) mod releases;
 pub(crate) mod scans;
 pub(crate) mod search;
+pub(crate) mod sessions;
 pub(crate) mod users;
 
 use std::{path::Path, time::Duration};
@@ -323,7 +324,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+        assert_eq!(versions, (1..=14).collect::<Vec<_>>());
         pool.close().await;
     }
 

@@ -17,7 +17,7 @@ use tokio::{
 use crate::{
     api,
     cli::{Cli, Command},
-    config::{Config, DocsConfig},
+    config::{AuthConfig, Config, DocsConfig},
     db,
     jobs::ScanService,
     library::{directories, scan},
@@ -67,6 +67,7 @@ pub(crate) async fn run() -> Result<()> {
     let scans = ScanService::new(database.clone(), roots);
     let result = serve_http(
         config.http.bind,
+        &config.auth,
         &config.docs,
         &database,
         &scans,
@@ -106,6 +107,7 @@ async fn scan_library(roots: Vec<PathBuf>) -> Result<()> {
 /// Bind the listener and serve requests until graceful shutdown completes.
 async fn serve_http(
     address: SocketAddr,
+    auth: &AuthConfig,
     docs: &DocsConfig,
     database: &sqlx::SqlitePool,
     scans: &ScanService,
@@ -119,7 +121,7 @@ async fn serve_http(
         .context("Failed to read HTTP listener address")?;
     tracing::info!(address = %bound_address, "HTTP server listening");
 
-    axum::serve(listener, api::router(docs, database, scans.clone()))
+    axum::serve(listener, api::router(auth, docs, database, scans.clone()))
         .with_graceful_shutdown(shutdown)
         .await
         .context("HTTP server failed")?;

@@ -13,6 +13,7 @@
 //! - 413: `payload_too_large`, request body exceeds the extractor limit.
 //! - 415: `unsupported_media_type`, JSON content type is required.
 //! - 422: `validation_error`, invalid JSON fields or domain input.
+//! - 429: `too_many_requests`, password workers are busy; retry later.
 //! - 404: `not_found`, "Resource not found".
 //! - 405: `method_not_allowed`, "Method not allowed"; routing adds `Allow`.
 //! - 409: `conflict`, catalog state conflicts with the requested change.
@@ -30,10 +31,13 @@ use utoipa::ToSchema;
 /// HTTP failure with a stable client-facing code and message.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
+    /// Password verification is at capacity; avoid queued costly work.
+    #[error("Too many login attempts; retry later")]
+    TooManyRequests,
     /// Authenticated account lacks permission for a shared operation.
     #[error("Administrator role required")]
     Forbidden,
-    /// Missing, malformed, or revoked personal bearer credential.
+    /// Missing, malformed, expired, or revoked bearer credential.
     #[error("Authentication required")]
     Unauthorized,
     /// The requested state conflicts with an existing catalog resource.
@@ -101,6 +105,7 @@ struct ErrorBody {
         "payload_too_large",
         "unsupported_media_type",
         "validation_error",
+        "too_many_requests",
         "not_found",
         "method_not_allowed",
         "conflict",
@@ -116,6 +121,9 @@ impl IntoResponse for ApiError {
     /// Render the JSON envelope and log unexpected failures once at ERROR.
     fn into_response(self) -> Response {
         let (status, code) = match &self {
+            Self::TooManyRequests => {
+                (StatusCode::TOO_MANY_REQUESTS, "too_many_requests")
+            }
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
@@ -148,6 +156,12 @@ impl IntoResponse for ApiError {
             },
         };
         let mut response = (status, Json(body)).into_response();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("1"),
+            );
+        }
         if status == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
                 axum::http::header::WWW_AUTHENTICATE,

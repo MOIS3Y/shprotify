@@ -128,6 +128,7 @@ mod tests {
             .await
             .unwrap();
         let app = crate::api::router(
+            &crate::config::AuthConfig::default(),
             &crate::config::DocsConfig { enabled: true },
             &pool,
             crate::jobs::ScanService::new(pool.clone(), vec![]),

@@ -32,6 +32,15 @@ pub(crate) enum Command {
 /// Account operations require local access to the configured SQLite database.
 #[derive(Debug, Subcommand)]
 pub(crate) enum UserCommand {
+    /// Set/reset a password and revoke sessions; personal keys remain valid.
+    Password {
+        /// Existing account name.
+        #[arg(long)]
+        name: String,
+        /// Read one password from stdin instead of prompting with no echo.
+        #[arg(long)]
+        password_stdin: bool,
+    },
     /// Set account permissions locally; existing keys use the new role.
     Role {
         /// Existing account name.
@@ -71,11 +80,23 @@ pub(crate) async fn run_user(
         UserCommand::Create { name }
         | UserCommand::Token { name }
         | UserCommand::Revoke { name }
+        | UserCommand::Password { name, .. }
         | UserCommand::Role { name, .. } => auth::name(name)?,
     };
     let pool = db::connect(path).await?;
     let result = async {
         let output = match command {
+            UserCommand::Password { password_stdin, .. } => {
+                let from_stdin = *password_stdin;
+                let password = tokio::task::spawn_blocking(move || {
+                    read_password(from_stdin)
+                })
+                .await??;
+                let hash = auth::password::hash(password).await?;
+                let user =
+                    db::sessions::set_password(&pool, &name, &hash).await?;
+                serde_json::json!({"user": user, "password_set": true})
+            }
             UserCommand::Role { role, .. } => {
                 let user = db::users::set_role(&pool, &name, *role).await?;
                 serde_json::json!({"user": user})
@@ -106,6 +127,50 @@ pub(crate) async fn run_user(
     result
 }
 
+/// Read a secret without command-line arguments, environment or echoed input.
+fn read_password(
+    from_stdin: bool,
+) -> anyhow::Result<zeroize::Zeroizing<String>> {
+    use std::io::IsTerminal;
+    let password = if from_stdin {
+        password_from_reader(std::io::stdin().lock())?
+    } else {
+        anyhow::ensure!(
+            std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
+            "Interactive password input requires a terminal; \
+            use --password-stdin for redirected input"
+        );
+        let term = console::Term::stderr();
+        term.write_str("Password: ")?;
+        let password = zeroize::Zeroizing::new(term.read_secure_line()?);
+        term.write_str("Confirm password: ")?;
+        let confirmation = zeroize::Zeroizing::new(term.read_secure_line()?);
+        anyhow::ensure!(*password == *confirmation, "Passwords do not match");
+        password
+    };
+    crate::auth::password::validate(&password)?;
+    Ok(password)
+}
+
+/// Read bounded UTF-8 through EOF, stripping only a single final LF or CRLF.
+fn password_from_reader(
+    reader: impl std::io::Read,
+) -> anyhow::Result<zeroize::Zeroizing<String>> {
+    use std::io::Read;
+    let mut input = zeroize::Zeroizing::new(String::new());
+    reader
+        .take((crate::auth::password::MAX_BYTES + 3) as u64)
+        .read_to_string(&mut input)?;
+    if input.ends_with('\n') {
+        input.pop();
+        if input.ends_with('\r') {
+            input.pop();
+        }
+    }
+    crate::auth::password::validate(&input)?;
+    Ok(input)
+}
+
 #[cfg(test)]
 mod tests {
     //! Startup argument parsing and standard CLI exit behavior.
@@ -131,6 +196,52 @@ mod tests {
             assert_eq!(cli.config, Some(PathBuf::from("dev/config.toml")));
         }
         assert!(Cli::try_parse_from(["shprotify", "user", "create"]).is_err());
+    }
+
+    /// Passwords come from a hidden prompt or bounded stdin, never argv.
+    #[test]
+    fn password_input_preserves_bytes_and_rejects_extra_lines() {
+        let cli = Cli::try_parse_from([
+            "shprotify",
+            "user",
+            "password",
+            "--name",
+            "alice",
+            "--password-stdin",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::User {
+                command: UserCommand::Password {
+                    password_stdin: true,
+                    ..
+                }
+            })
+        ));
+        assert!(
+            Cli::try_parse_from([
+                "shprotify",
+                "user",
+                "password",
+                "--name",
+                "alice",
+                "--password",
+                "a strong password",
+            ])
+            .is_err()
+        );
+        for suffix in ["", "\n", "\r\n"] {
+            let input = format!("  a strong password  {suffix}");
+            assert_eq!(
+                &*password_from_reader(input.as_bytes()).unwrap(),
+                "  a strong password  "
+            );
+        }
+        for input in ["short", "a strong password\nextra", &"x".repeat(1027)] {
+            assert!(password_from_reader(input.as_bytes()).is_err());
+        }
+        assert!(password_from_reader(&[0xff_u8][..]).is_err());
     }
 
     /// Roles require an explicit valid choice; there is no implicit promotion.

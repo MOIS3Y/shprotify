@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Password session settings, applied when issuing new credentials.
+    pub(crate) auth: AuthConfig,
     /// External collection roots checked separately before HTTP startup.
     pub(crate) library: LibraryConfig,
     /// HTTP listener settings.
@@ -31,6 +33,23 @@ pub(crate) struct Config {
     pub(crate) logging: LoggingConfig,
     /// Optional interactive API documentation and OpenAPI schema.
     pub(crate) docs: DocsConfig,
+}
+
+/// Password sessions have an absolute lifetime independent of activity.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuthConfig {
+    /// Lifetime of newly issued sessions in seconds; must be positive.
+    pub(crate) session_ttl_seconds: u32,
+}
+
+impl Default for AuthConfig {
+    /// Allow clients to stay signed in for 30 days by default.
+    fn default() -> Self {
+        Self {
+            session_ttl_seconds: 30 * 24 * 60 * 60,
+        }
+    }
 }
 
 /// External music directories; an empty list keeps catalog-only use possible.
@@ -162,6 +181,10 @@ impl Config {
         let config: Self =
             figment.extract().context("Invalid configuration")?;
         ensure!(
+            config.auth.session_ttl_seconds > 0,
+            "auth.session_ttl_seconds must be greater than zero"
+        );
+        ensure!(
             !config.database.path.trim().is_empty(),
             "database.path must not be empty"
         );
@@ -194,6 +217,7 @@ mod tests {
         let config = Config::extract(Config::sources(None).unwrap()).unwrap();
         assert_eq!(config.http.bind.to_string(), "127.0.0.1:3000");
         assert_eq!(config.database.path, "shprotify.db");
+        assert_eq!(config.auth.session_ttl_seconds, 2_592_000);
         assert!(matches!(config.logging.level, LogLevel::Info));
         assert!(matches!(config.logging.format, LogFormat::Pretty));
         assert!(!config.docs.enabled);
@@ -223,6 +247,12 @@ mod tests {
     #[test]
     fn rejects_invalid_values_and_unknown_fields() {
         for contents in [
+            "[auth]\nsession_ttl_seconds = 0",
+            "[auth]\nsession_ttl_seconds = -1",
+            "[auth]\nsession_ttl_seconds = 4294967296",
+            "[auth]\nsession_ttl_seconds = 1.5",
+            "[auth]\nsession_ttl_seconds = '30d'",
+            "[auth]\nunknown = true",
             "[http]\nbind = 'localhost:3000'",
             "[http]\nbind = '127.0.0.1:99999'",
             "[database]\npath = '  '",
@@ -239,6 +269,18 @@ mod tests {
             "[http",
         ] {
             assert!(from_toml(contents).is_err(), "accepted: {contents}");
+        }
+    }
+
+    /// Positive lifetimes, including the integer bounds, are configurable.
+    #[test]
+    fn session_lifetime_uses_seconds_and_preserves_other_defaults() {
+        for seconds in [1, 3600, u32::MAX] {
+            let config =
+                from_toml(&format!("[auth]\nsession_ttl_seconds = {seconds}"))
+                    .unwrap();
+            assert_eq!(config.auth.session_ttl_seconds, seconds);
+            assert_eq!(config.database.path, "shprotify.db");
         }
     }
 
@@ -274,6 +316,7 @@ mod tests {
             assert!(matches!(config.logging.level, LogLevel::Debug));
             assert!(matches!(config.logging.format, LogFormat::Json));
             assert!(config.docs.enabled);
+            assert_eq!(config.auth.session_ttl_seconds, 3600);
             assert_eq!(
                 config.library.directories,
                 [PathBuf::from("/music files"), PathBuf::from("/archive")]
@@ -297,6 +340,7 @@ mod tests {
             .env("SHPROTIFY_LOGGING__LEVEL", "debug")
             .env("SHPROTIFY_LOGGING__FORMAT", "json")
             .env("SHPROTIFY_DOCS__ENABLED", "true")
+            .env("SHPROTIFY_AUTH__SESSION_TTL_SECONDS", "3600")
             .env(
                 "SHPROTIFY_LIBRARY__DIRECTORIES",
                 r#"["/music files", "/archive"]"#,

@@ -46,7 +46,7 @@ pub(crate) async fn issue(
     Ok(user)
 }
 
-/// Revoke every credential for one account, retaining all personal data.
+/// Revoke all personal keys, retaining password sessions and personal data.
 pub(crate) async fn revoke(
     pool: &SqlitePool,
     name: &str,
@@ -65,15 +65,18 @@ pub(crate) async fn revoke(
     Ok(user)
 }
 
-/// Resolve a current credential digest; raw keys are never queried or stored.
+/// Resolve a key or unexpired session digest using current account rights.
 pub(crate) async fn authenticate(
     pool: &SqlitePool,
     digest: &str,
 ) -> Result<Option<User>, sqlx::Error> {
     sqlx::query_as(
         "SELECT u.id, u.name, u.role FROM users u \
-        JOIN user_keys k ON k.user_id = u.id WHERE k.digest = ?",
+        WHERE u.id IN (SELECT user_id FROM user_keys WHERE digest = ? \
+        UNION ALL SELECT user_id FROM user_sessions \
+        WHERE digest = ? AND expires_at > unixepoch())",
     )
+    .bind(digest)
     .bind(digest)
     .fetch_optional(pool)
     .await

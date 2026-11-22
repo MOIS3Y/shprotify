@@ -105,6 +105,7 @@ mod tests {
         assert_ne!(copies[0].recording_id, copies[1].recording_id);
         let service = crate::jobs::ScanService::new(pool.clone(), vec![]);
         let app = crate::api::router(
+            &crate::config::AuthConfig::default(),
             &crate::config::DocsConfig::default(),
             &pool,
             service,

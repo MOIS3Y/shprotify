@@ -181,6 +181,7 @@ mod tests {
             .await
             .unwrap();
         let router = crate::api::router(
+            &crate::config::AuthConfig::default(),
             &DocsConfig::default(),
             &pool,
             crate::jobs::ScanService::new(pool.clone(), vec![]),

@@ -9,6 +9,14 @@
 # GET /api/v1/health reports liveness. SIGINT/SIGTERM stop the server.
 bind = "127.0.0.1:3000"
 
+[auth]
+# Lifetime of new password sessions in seconds; default: 30 days.
+# Positive integer, 1..4294967295. Activity does not extend the lifetime.
+# Restart to apply changes. Existing sessions keep their stored expiry.
+# Personal API keys do not expire and are unaffected by this setting.
+# Environment: SHPROTIFY_AUTH__SESSION_TTL_SECONDS=86400 (one day).
+session_ttl_seconds = 2592000
+
 [database]
 # Relative to the working directory, not to this configuration file.
 # Parent directory must exist; the database file is created if missing.

@@ -23,11 +23,12 @@ All API operations are served under `/api/v1`.
 
 Errors use a JSON envelope with `error.code` and `error.message`:
 - 400: `bad_request` — Malformed request or invalid parameters.
-- 401: `unauthorized` — Missing or invalid personal key; Bearer challenge.
+- 401: `unauthorized` — Invalid/expired credential; Bearer challenge.
 - 403: `forbidden` — Administrator role required.
 - 413: `payload_too_large` — Request body exceeds the size limit.
 - 415: `unsupported_media_type` — JSON content type is required.
 - 422: `validation_error` — Invalid JSON fields or domain input.
+- 429: `too_many_requests` — Login workers busy; includes `Retry-After`.
 - 404: `not_found` — Resource not found.
 - 405: `method_not_allowed` — Method not allowed; includes `Allow`.
 - 409: `conflict` — Catalog state conflicts with the requested change.
@@ -37,6 +38,7 @@ Internal failure details are logged on the server and never returned.
 HEAD responses have no body, including error responses."
     ),
     tags(
+        (name = "auth", description = "Password login and session logout"),
         (name = "personal", description = "Account, reactions and favorites"),
         (name = "system", description = "Process health"),
         (name = "search", description = "Shared catalog search"),
@@ -52,7 +54,7 @@ HEAD responses have no body, including error responses."
 )]
 pub(super) struct ApiDoc;
 
-/// Shared security scheme for Swagger's Authorize control on personal routes.
+/// Shared Bearer scheme for personal keys and password session tokens.
 struct PersonalSecurity;
 
 impl utoipa::Modify for PersonalSecurity {
@@ -103,6 +105,7 @@ mod tests {
     async fn get(path: &str, enabled: bool) -> Response {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         crate::api::router(
+            &crate::config::AuthConfig::default(),
             &DocsConfig { enabled },
             &pool,
             crate::jobs::ScanService::new(pool.clone(), vec![]),
@@ -203,7 +206,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 20);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 22);
         assert!(schema["paths"].get("/health").is_none());
     }
 
