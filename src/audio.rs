@@ -5,6 +5,7 @@
 //! used for the media handle. Run these filesystem operations off-thread.
 
 pub(crate) mod history;
+pub(crate) mod queue;
 
 use std::{
     fs::File,

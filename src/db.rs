@@ -11,6 +11,7 @@ pub(crate) mod history;
 pub(crate) mod indexing;
 mod matching;
 pub(crate) mod playlists;
+pub(crate) mod queue;
 pub(crate) mod reactions;
 mod recording_matches;
 pub(crate) mod recordings;
@@ -84,6 +85,67 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// Existing published playlists survive queue creation without copies.
+    #[tokio::test]
+    async fn upgrades_playlists_to_independent_empty_queues() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let previous = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version <= 17)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        users::create(&pool, "legacy", &crate::auth::digest("legacy-key"))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Track')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let playlist = playlists::create(
+            &pool,
+            1,
+            crate::playlists::PlaylistDetails::new("Mix", "").unwrap(),
+        )
+        .await
+        .unwrap();
+        playlists::replace_tracks(&pool, 1, playlist.id, 1, &[1, 1])
+            .await
+            .unwrap();
+        playlists::publish(&pool, 1, playlist.id, 2, true)
+            .await
+            .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let queue = queue::get(&pool, 1).await.unwrap();
+        assert_eq!(queue.version, 0);
+        assert!(queue.items.is_empty());
+        let playlist = playlists::find(&pool, 1, playlist.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(playlist.is_public);
+        assert_eq!(playlist.version, 3);
+        assert_eq!(
+            playlists::tracks(&pool, 1, playlist.id, 50, 0)
+                .await
+                .unwrap()
+                .items
+                .len(),
+            2
+        );
+        assert!(
+            users::authenticate(&pool, &crate::auth::digest("legacy-key"))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        pool.close().await;
+    }
 
     /// Upgrading adds no publication and preserves old versions and contents.
     #[tokio::test]
@@ -495,7 +557,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=17).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=18).collect::<Vec<_>>());
         pool.close().await;
     }
 
