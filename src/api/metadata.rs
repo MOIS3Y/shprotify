@@ -188,7 +188,7 @@ fn image(
 }
 
 /// Read editable fields, external identity and the current version.
-#[utoipa::path(get, path = "/metadata/{kind}/{id}", tag = "metadata",
+#[utoipa::path(get, path = "/metadata/{kind}/{id}", tag = "Admin: Metadata",
     operation_id = "get_metadata",
     params(("kind" = EntityKind, Path),("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])),
@@ -210,7 +210,7 @@ async fn get_metadata(
 }
 
 /// Apply an explicit full correction without touching source files.
-#[utoipa::path(put, path = "/metadata/{kind}/{id}", tag = "metadata",
+#[utoipa::path(put, path = "/metadata/{kind}/{id}", tag = "Admin: Metadata",
     operation_id = "correct_metadata",
     params(("kind" = EntityKind, Path),("id" = i64, Path, minimum = 1)),
     request_body = Correction,
@@ -243,7 +243,8 @@ async fn correct_metadata(
 }
 
 /// Read a bounded audit page, newest first.
-#[utoipa::path(get, path = "/metadata/{kind}/{id}/revisions", tag = "metadata",
+#[utoipa::path(get, path = "/metadata/{kind}/{id}/revisions",
+    tag = "Admin: Metadata",
     operation_id = "get_revisions",
     params(("kind" = EntityKind, Path),("id" = i64, Path, minimum = 1),
         Pagination),
@@ -275,7 +276,8 @@ async fn get_revisions(
 }
 
 /// Start one bounded background lookup/extraction; catalog stays unchanged.
-#[utoipa::path(post, path = "/metadata/{kind}/{id}/jobs", tag = "metadata",
+#[utoipa::path(post, path = "/metadata/{kind}/{id}/jobs",
+    tag = "Admin: Enrichment",
     operation_id = "start_job",
     params(("kind" = EntityKind, Path),("id" = i64, Path, minimum = 1)),
     request_body = JobRequest,
@@ -324,7 +326,7 @@ async fn start_job(
 }
 
 /// Inspect a persisted job and review its candidates.
-#[utoipa::path(get, path = "/metadata/jobs/{id}", tag = "metadata",
+#[utoipa::path(get, path = "/metadata/jobs/{id}", tag = "Admin: Enrichment",
     operation_id = "get_job",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])),
@@ -355,7 +357,8 @@ async fn get_job(
 }
 
 /// Confirm identity and explicitly selected fields using the current version.
-#[utoipa::path(post, path = "/metadata/candidates/{id}", tag = "metadata",
+#[utoipa::path(post, path = "/metadata/candidates/{id}",
+    tag = "Admin: Enrichment",
     operation_id = "apply_candidate",
     params(("id" = i64, Path, minimum = 1)),
     request_body = ApplyCandidate,
@@ -390,7 +393,8 @@ async fn apply_candidate(
 }
 
 /// Reject a pending candidate without modifying the catalog.
-#[utoipa::path(delete, path = "/metadata/candidates/{id}", tag = "metadata",
+#[utoipa::path(delete, path = "/metadata/candidates/{id}",
+    tag = "Admin: Enrichment",
     operation_id = "reject_candidate",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])),
@@ -413,7 +417,8 @@ async fn reject_candidate(
 }
 
 /// Upload validated JPEG/PNG bytes, maximum 5 MiB.
-#[utoipa::path(put, path = "/metadata/{kind}/{id}/artwork", tag = "metadata",
+#[utoipa::path(put, path = "/metadata/{kind}/{id}/artwork",
+    tag = "Admin: Metadata",
     operation_id = "put_artwork",
     params(("kind" = EntityKind, Path),("id" = i64, Path, minimum = 1),
         Version),
@@ -478,7 +483,7 @@ async fn put_artwork(
 
 /// Remove a cover without deleting any catalog or music data.
 #[utoipa::path(delete, path = "/metadata/{kind}/{id}/artwork",
-    tag = "metadata",
+    tag = "Admin: Metadata",
     operation_id = "delete_artwork",
     params(("kind" = EntityKind, Path),("id" = i64, Path, minimum = 1),
         Version),
@@ -517,7 +522,7 @@ async fn delete_artwork(
 }
 
 /// Read a stored cover; catalog artwork is public like catalog metadata.
-#[utoipa::path(get, path = "/artwork/{kind}/{id}", tag = "metadata",
+#[utoipa::path(get, path = "/artwork/{kind}/{id}", tag = "Artwork",
     operation_id = "get_artwork",
     params(("kind" = EntityKind, Path),("id" = i64, Path, minimum = 1)),
     responses((status = 200, description = "Stored JPEG/PNG",
@@ -541,7 +546,7 @@ async fn get_artwork(
 
 /// Preview a validated suggested cover before accepting it.
 #[utoipa::path(get, path = "/metadata/candidates/{id}/artwork",
-    tag = "metadata",
+    tag = "Admin: Enrichment",
     operation_id = "preview_artwork",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])),
@@ -568,7 +573,8 @@ async fn preview_artwork(
 }
 
 /// Correct a file/track match; this never merges recordings or personal data.
-#[utoipa::path(put, path = "/metadata/links/{kind}/{id}", tag = "metadata",
+#[utoipa::path(put, path = "/metadata/links/{kind}/{id}",
+    tag = "Admin: Metadata",
     operation_id = "correct_metadata_link",
     params(("kind" = crate::library::enrichment::LinkKind, Path),
         ("id" = i64, Path, minimum = 1)),
@@ -609,7 +615,7 @@ async fn correct_link(
 }
 
 /// List persisted job history, newest first, without contacting providers.
-#[utoipa::path(get, path = "/metadata/jobs", tag = "metadata",
+#[utoipa::path(get, path = "/metadata/jobs", tag = "Admin: Enrichment",
     operation_id = "list_metadata_jobs", params(Pagination),
     security(("personal_key" = [])), responses(
         (status = 200, description = "Metadata job page",

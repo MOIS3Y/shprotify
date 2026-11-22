@@ -61,7 +61,7 @@ struct SearchPage {
 /// FTS operators are treated literally. Paths, source tags, credits, and audio
 /// contents are not searchable fields. Files need not exist for a catalog hit.
 #[utoipa::path(
-    get, path = "/search", tag = "search", operation_id = "search_catalog",
+    get, path = "/search", tag = "Search", operation_id = "search_catalog",
     params(SearchQuery), responses(
         (status = 200, body = SearchPage, description = "Ranked catalog hits"),
         (status = 400, response = ErrorResponse),

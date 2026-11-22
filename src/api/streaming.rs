@@ -68,7 +68,7 @@ impl utoipa::ToSchema for AudioBytes {}
 /// HEAD returns full-file headers without reading the body and ignores Range.
 /// If-Range falls back to the full response; validators are not issued yet.
 #[utoipa::path(get,
-    path = "/recordings/{id}/files/{file_id}/stream", tag = "audio_files",
+    path = "/recordings/{id}/files/{file_id}/stream", tag = "Playback",
     operation_id = "stream_audio_file", security(("personal_key" = [])),
     params(
         ("id" = i64, Path, minimum = 1, description = "Recording ID"),

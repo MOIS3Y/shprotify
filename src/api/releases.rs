@@ -65,7 +65,7 @@ struct ReleasePage {
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    post, path = "/releases", tag = "releases",
+    post, path = "/releases", tag = "Admin: Catalog",
     operation_id = "create_release", request_body = CreateRelease,
     security(("personal_key" = [])),
     responses(
@@ -109,7 +109,7 @@ async fn create_release(
 
 /// Retrieve one release with credits in their original order.
 #[utoipa::path(
-    get, path = "/releases/{id}", tag = "releases",
+    get, path = "/releases/{id}", tag = "Releases",
     operation_id = "get_release",
     params(("id" = i64, Path, minimum = 1, description = "Release ID")),
     responses(
@@ -134,7 +134,7 @@ async fn get_release(
 
 /// List whole releases, including all credits, in ascending ID order.
 #[utoipa::path(
-    get, path = "/releases", tag = "releases", operation_id = "list_releases",
+    get, path = "/releases", tag = "Releases", operation_id = "list_releases",
     params(Pagination),
     responses(
         (status = 200, body = ReleasePage, description = "Release page"),

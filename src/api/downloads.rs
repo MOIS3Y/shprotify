@@ -137,7 +137,7 @@ fn identifier(
 
 /// List configured acquisition capabilities; experimental availability may
 /// change.
-#[utoipa::path(get, path = "/downloads/providers", tag = "downloads",
+#[utoipa::path(get, path = "/downloads/providers", tag = "Downloads",
     operation_id = "downloads_providers", security(("personal_key" = [])),
     responses((status = 200, description = "Owned acquisition result",
             body = Vec<Provider>),
@@ -164,7 +164,7 @@ async fn providers(
 
 /// Queue a bounded YouTube search for a recording, Discovery candidate or
 /// explicit query.
-#[utoipa::path(post, path = "/me/downloads/searches", tag = "downloads",
+#[utoipa::path(post, path = "/me/downloads/searches", tag = "Downloads",
     operation_id = "downloads_search", security(("personal_key" = [])),
     request_body = SearchRequest,
     responses((status = 202, description = "Owned acquisition result",
@@ -187,7 +187,7 @@ async fn search(
 }
 
 /// List only this account’s persisted acquisition history, newest first.
-#[utoipa::path(get, path = "/me/downloads", tag = "downloads",
+#[utoipa::path(get, path = "/me/downloads", tag = "Downloads",
     operation_id = "downloads_list_jobs", security(("personal_key" = [])),
     params(Pagination),
     responses((status = 200, description = "Owned acquisition result",
@@ -220,7 +220,7 @@ async fn list_jobs(
 
 /// Queue one selected source from an owned search completed within the last
 /// hour.
-#[utoipa::path(post, path = "/me/downloads", tag = "downloads",
+#[utoipa::path(post, path = "/me/downloads", tag = "Downloads",
     operation_id = "downloads_download", security(("personal_key" = [])),
     request_body = DownloadRequest,
     responses((status = 202, description = "Owned acquisition result",
@@ -248,7 +248,7 @@ async fn download(
 }
 
 /// Read an owned job, progress, safe failure or final catalog IDs.
-#[utoipa::path(get, path = "/me/downloads/{id}", tag = "downloads",
+#[utoipa::path(get, path = "/me/downloads/{id}", tag = "Downloads",
     operation_id = "downloads_get_job", security(("personal_key" = [])),
     params(("id" = i64, Path, minimum = 1)),
     responses((status = 200, description = "Owned acquisition result",
@@ -273,7 +273,7 @@ async fn get_job(
 }
 
 /// Read at most five stable source results of an owned search job.
-#[utoipa::path(get, path = "/me/downloads/{id}/sources", tag = "downloads",
+#[utoipa::path(get, path = "/me/downloads/{id}/sources", tag = "Downloads",
     operation_id = "downloads_sources", security(("personal_key" = [])),
     params(("id" = i64, Path, minimum = 1)),
     responses((status = 200, description = "Owned acquisition result",
@@ -299,7 +299,7 @@ async fn sources(
 
 /// Cancel queued or provider work; importing is too late to cancel. Terminal
 /// requests are idempotent.
-#[utoipa::path(post, path = "/me/downloads/{id}/cancel", tag = "downloads",
+#[utoipa::path(post, path = "/me/downloads/{id}/cancel", tag = "Downloads",
     operation_id = "downloads_cancel", security(("personal_key" = [])),
     params(("id" = i64, Path, minimum = 1)),
     responses((status = 200, description = "Owned acquisition result",
@@ -325,7 +325,7 @@ async fn cancel(
 
 /// Explicitly retry unsuccessful work after rechecking access and resource
 /// limits.
-#[utoipa::path(post, path = "/me/downloads/{id}/retry", tag = "downloads",
+#[utoipa::path(post, path = "/me/downloads/{id}/retry", tag = "Downloads",
     operation_id = "downloads_retry", security(("personal_key" = [])),
     params(("id" = i64, Path, minimum = 1)),
     responses((status = 202, description = "Owned acquisition result",
@@ -588,7 +588,7 @@ mod tests {
         let mut operations = 0;
         for (path, methods) in schema["paths"].as_object().unwrap() {
             for operation in methods.as_object().unwrap().values() {
-                if operation["tags"][0] == "downloads" {
+                if operation["tags"][0] == "Downloads" {
                     operations += 1;
                     assert!(path.starts_with("/api/v1/"));
                     assert_eq!(

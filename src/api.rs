@@ -173,7 +173,7 @@ struct Health {
 #[utoipa::path(
     get,
     path = "/health",
-    tag = "system",
+    tag = "System",
     operation_id = "get_health",
     responses((status = 200, description = "Process is alive", body = Health))
 )]

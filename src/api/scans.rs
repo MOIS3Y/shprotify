@@ -93,7 +93,7 @@ struct ScanErrorPage {
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    post, path = "/library/scans", tag = "library_scans",
+    post, path = "/library/scans", tag = "Admin: Library",
     operation_id = "start_library_scan", params(ScanOptions),
     security(("personal_key" = [])),
     responses(
@@ -139,7 +139,7 @@ async fn start_scan(
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    get, path = "/library/scans/{id}", tag = "library_scans",
+    get, path = "/library/scans/{id}", tag = "Admin: Library",
     operation_id = "get_library_scan",
     params(("id" = i64, Path, description = "Scan identifier", minimum = 1)),
     security(("personal_key" = [])),
@@ -170,7 +170,7 @@ async fn get_scan(
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    get, path = "/library/scans", tag = "library_scans",
+    get, path = "/library/scans", tag = "Admin: Library",
     operation_id = "list_library_scans", params(Pagination),
     security(("personal_key" = [])),
     responses(
@@ -201,7 +201,7 @@ async fn list_scans(
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    get, path = "/library/scans/{id}/errors", tag = "library_scans",
+    get, path = "/library/scans/{id}/errors", tag = "Admin: Library",
     operation_id = "list_library_scan_errors", params(Pagination,
         ("id" = i64, Path, description = "Scan identifier", minimum = 1)),
     security(("personal_key" = [])),

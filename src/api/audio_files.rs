@@ -79,7 +79,7 @@ impl From<FileError> for ApiError {
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    post, path = "/recordings/{id}/files", tag = "audio_files",
+    post, path = "/recordings/{id}/files", tag = "Admin: Catalog",
     operation_id = "register_audio_file", request_body = RegisterFile,
     params(("id" = i64, Path, minimum = 1, description = "Recording ID")),
     security(("personal_key" = [])),
@@ -122,7 +122,7 @@ async fn register_file(
 
 /// Retrieve metadata for a file belonging to the specified recording.
 #[utoipa::path(
-    get, path = "/recordings/{id}/files/{file_id}", tag = "audio_files",
+    get, path = "/recordings/{id}/files/{file_id}", tag = "Audio files",
     operation_id = "get_audio_file",
     params(
         ("id" = i64, Path, minimum = 1, description = "Recording ID"),
@@ -153,7 +153,7 @@ async fn get_file(
 /// Returns 404 for unknown files, a wrong parent, or files never probed by a
 /// background scan. The read-only CLI does not persist these observations.
 #[utoipa::path(
-    get, path = "/recordings/{id}/files/{file_id}/tags", tag = "audio_files",
+    get, path = "/recordings/{id}/files/{file_id}/tags", tag = "Audio files",
     operation_id = "get_audio_file_tags",
     params(("id" = i64, Path, minimum = 1, description = "Recording ID"),
         ("file_id" = i64, Path, minimum = 1, description = "Audio file ID")),
@@ -180,7 +180,7 @@ async fn get_file_tags(
 
 /// List stored file metadata for a recording in ascending identifier order.
 #[utoipa::path(
-    get, path = "/recordings/{id}/files", tag = "audio_files",
+    get, path = "/recordings/{id}/files", tag = "Audio files",
     operation_id = "list_audio_files",
     params(("id" = i64, Path, minimum = 1, description = "Recording ID"),
         Pagination),

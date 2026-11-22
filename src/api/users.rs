@@ -91,7 +91,7 @@ struct IssuedKey {
 
 /// Create an account atomically with a password and no permanent keys.
 /// Requires admin; the first administrator must be provisioned locally.
-#[utoipa::path(post, path = "/users", tag = "users",
+#[utoipa::path(post, path = "/users", tag = "Admin: Users",
     operation_id = "create_user", request_body = CreateUser,
     security(("personal_key" = [])), responses(
         (status = 201, body = User, description = "Account created",
@@ -141,7 +141,7 @@ async fn create_user(
 }
 
 /// List account identities with bounded pagination; requires admin.
-#[utoipa::path(get, path = "/users", tag = "users",
+#[utoipa::path(get, path = "/users", tag = "Admin: Users",
     operation_id = "list_users", params(Pagination),
     security(("personal_key" = [])), responses(
         (status = 200, body = UserPage, description = "Account page"),
@@ -167,7 +167,7 @@ async fn list_users(
 }
 
 /// Read an account identity without credentials; requires admin.
-#[utoipa::path(get, path = "/users/{id}", tag = "users",
+#[utoipa::path(get, path = "/users/{id}", tag = "Admin: Users",
     operation_id = "get_user",
     params(("id" = i64, Path, minimum = 1, description = "Account ID")),
     security(("personal_key" = [])), responses(
@@ -192,7 +192,7 @@ async fn get_user(
 
 /// Replace permissions; admin required even when changing one's own role.
 /// Demoting the last admin is recoverable using the local CLI.
-#[utoipa::path(put, path = "/users/{id}/role", tag = "users",
+#[utoipa::path(put, path = "/users/{id}/role", tag = "Admin: Users",
     operation_id = "set_user_role", request_body = SetRole,
     params(("id" = i64, Path, minimum = 1, description = "Account ID")),
     security(("personal_key" = [])), responses(
@@ -223,7 +223,7 @@ async fn set_role(
 
 /// Reset a password and revoke all of its sessions, retaining personal keys.
 /// Requires admin; returns no password, hash, or new session.
-#[utoipa::path(put, path = "/users/{id}/password", tag = "users",
+#[utoipa::path(put, path = "/users/{id}/password", tag = "Admin: Users",
     operation_id = "set_user_password", request_body = SetPassword,
     params(("id" = i64, Path, minimum = 1, description = "Account ID")),
     security(("personal_key" = [])), responses(
@@ -259,7 +259,7 @@ async fn set_password(
 }
 
 /// Issue an additional permanent key; requires admin and returns it once.
-#[utoipa::path(post, path = "/users/{id}/keys", tag = "users",
+#[utoipa::path(post, path = "/users/{id}/keys", tag = "Admin: Users",
     operation_id = "issue_user_key",
     params(("id" = i64, Path, minimum = 1, description = "Account ID")),
     security(("personal_key" = [])), responses(
@@ -291,7 +291,7 @@ async fn issue_key(
 }
 
 /// Revoke target keys, retaining sessions; requires admin.
-#[utoipa::path(delete, path = "/users/{id}/keys", tag = "users",
+#[utoipa::path(delete, path = "/users/{id}/keys", tag = "Admin: Users",
     operation_id = "revoke_user_keys",
     params(("id" = i64, Path, minimum = 1, description = "Account ID")),
     security(("personal_key" = [])), responses(
@@ -314,7 +314,7 @@ async fn revoke_keys(
 }
 
 /// Revoke target sessions, retaining password login; requires admin.
-#[utoipa::path(delete, path = "/users/{id}/sessions", tag = "users",
+#[utoipa::path(delete, path = "/users/{id}/sessions", tag = "Admin: Users",
     operation_id = "revoke_user_sessions",
     params(("id" = i64, Path, minimum = 1, description = "Account ID")),
     security(("personal_key" = [])), responses(

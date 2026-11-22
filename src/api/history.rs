@@ -68,7 +68,7 @@ struct HistoryPage {
 /// Identical account/event retries return 200 with the original item.
 /// Full means half the known duration (rounded up) or four minutes, whichever
 /// is shorter; unknown duration uses four minutes. Other events are short.
-#[utoipa::path(post, path = "/me/history", tag = "history",
+#[utoipa::path(post, path = "/me/history", tag = "History",
     operation_id = "report_playback", request_body = ReportPlayback,
     security(("personal_key" = [])), responses(
         (status = 201, body = PlaybackEvent, description = "Playback recorded",
@@ -125,7 +125,7 @@ async fn report_playback(
 }
 
 /// Read only this account's history, ordered by reported playback start.
-#[utoipa::path(get, path = "/me/history", tag = "history",
+#[utoipa::path(get, path = "/me/history", tag = "History",
     operation_id = "list_history", params(Pagination),
     security(("personal_key" = [])), responses(
         (status = 200, body = HistoryPage, description = "History page"),
@@ -151,7 +151,7 @@ async fn list_history(
 }
 
 /// Read an owned event; another account's identifier receives the same 404.
-#[utoipa::path(get, path = "/me/history/{id}", tag = "history",
+#[utoipa::path(get, path = "/me/history/{id}", tag = "History",
     operation_id = "get_history_item",
     params(("id" = i64, Path, minimum = 1, description = "History event ID")),
     security(("personal_key" = [])), responses(

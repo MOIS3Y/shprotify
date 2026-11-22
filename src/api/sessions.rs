@@ -63,7 +63,7 @@ struct Session {
 
 /// Issue a session with the configured lifetime (default: 30 days).
 /// Unknown users, key-only accounts and wrong passwords all return 401.
-#[utoipa::path(post, path = "/auth/login", tag = "auth",
+#[utoipa::path(post, path = "/auth/login", tag = "Authentication",
     request_body = Login, responses(
         (status = 200, body = Session, description = "New expiring session"),
         (status = 400, response = ErrorResponse),
@@ -116,7 +116,7 @@ async fn login(
 }
 
 /// Revoke the presented active session; personal keys require CLI revocation.
-#[utoipa::path(post, path = "/auth/logout", tag = "auth",
+#[utoipa::path(post, path = "/auth/logout", tag = "Authentication",
     security(("personal_key" = [])), responses(
         (status = 204, description = "Current session revoked"),
         (status = 401, response = ErrorResponse),

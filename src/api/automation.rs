@@ -142,7 +142,7 @@ fn entity(
 }
 
 /// Read global interval/import policy and incremental scan status as admin.
-#[utoipa::path(get, path="/automation", tag="automation",
+#[utoipa::path(get, path="/automation", tag="Admin: Automation",
     operation_id="get_automation_status", security(("personal_key"=[])),
     responses((status=200, description="Configuration and scan state",
         body=AutomationStatus), (status=401, response=ErrorResponse),
@@ -164,7 +164,7 @@ async fn status(
 
 /// Review administrator-selected metadata targets; no implicit whole-catalog
 /// run.
-#[utoipa::path(get, path="/automation/metadata", tag="automation",
+#[utoipa::path(get, path="/automation/metadata", tag="Admin: Automation",
     operation_id="list_metadata_schedules", security(("personal_key"=[])),
     params(Pagination),
     responses((status=200, description="Configured targets",
@@ -213,7 +213,7 @@ async fn metadata_targets(
 }
 
 /// Read interval settings; GET does not create a schedule.
-#[utoipa::path(get, path="/me/discovery/feeds/{id}/schedule", tag="automation",
+#[utoipa::path(get, path="/me/discovery/feeds/{id}/schedule", tag="Discovery",
     operation_id="get_feed_schedule", security(("personal_key"=[])),
     params(("id"=i64, Path, minimum=1)),
     responses((status=200, description="Schedule settings and outcome",
@@ -235,7 +235,7 @@ async fn get_feed(
 
 /// Replace settings with a version check; disabling leaves active work
 /// attached.
-#[utoipa::path(put, path="/me/discovery/feeds/{id}/schedule", tag="automation",
+#[utoipa::path(put, path="/me/discovery/feeds/{id}/schedule", tag="Discovery",
     operation_id="set_feed_schedule", security(("personal_key"=[])),
     request_body=ScheduleUpdate,
     params(("id"=i64, Path, minimum=1)),
@@ -269,7 +269,8 @@ async fn set_feed(
 
 /// Read interval settings; GET does not create a schedule. Metadata jobs only
 /// produce proposals for manual review.
-#[utoipa::path(get, path="/metadata/{kind}/{id}/schedule", tag="automation",
+#[utoipa::path(get, path="/metadata/{kind}/{id}/schedule",
+    tag="Admin: Automation",
     operation_id="get_metadata_schedule", security(("personal_key"=[])),
     params(("id"=i64, Path, minimum=1), ("kind"=EntityKind, Path)),
     responses((status=200, description="Schedule settings and outcome",
@@ -294,7 +295,8 @@ async fn get_metadata(
 
 /// Replace settings with a version check; disabling leaves active work
 /// attached. Metadata jobs only produce proposals for manual review.
-#[utoipa::path(put, path="/metadata/{kind}/{id}/schedule", tag="automation",
+#[utoipa::path(put, path="/metadata/{kind}/{id}/schedule",
+    tag="Admin: Automation",
     operation_id="set_metadata_schedule", security(("personal_key"=[])),
     request_body=ScheduleUpdate,
     params(("id"=i64, Path, minimum=1), ("kind"=EntityKind, Path)),
@@ -539,7 +541,11 @@ mod tests {
         let mut count = 0;
         for methods in schema["paths"].as_object().unwrap().values() {
             for operation in methods.as_object().unwrap().values() {
-                if operation["tags"][0] == "automation" {
+                if operation["operationId"].as_str().is_some_and(|id| {
+                    id == "get_automation_status"
+                        || id == "list_metadata_schedules"
+                        || id.ends_with("_schedule")
+                }) {
                     count += 1;
                     assert_eq!(
                         operation["security"][0]["personal_key"],

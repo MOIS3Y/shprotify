@@ -41,7 +41,7 @@ struct DuplicatePage {
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    get, path = "/library/duplicates", tag = "library_scans",
+    get, path = "/library/duplicates", tag = "Admin: Library",
     operation_id = "list_duplicate_files", params(Pagination),
     security(("personal_key" = [])),
     responses(

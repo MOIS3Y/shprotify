@@ -59,7 +59,7 @@ struct ArtistPage {
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    post, path = "/artists", tag = "artists",
+    post, path = "/artists", tag = "Admin: Catalog",
     operation_id = "create_artist", request_body = CreateArtist,
     security(("personal_key" = [])),
     responses(
@@ -99,7 +99,7 @@ async fn create_artist(
 
 /// Retrieve one catalog artist by its positive identifier.
 #[utoipa::path(
-    get, path = "/artists/{id}", tag = "artists",
+    get, path = "/artists/{id}", tag = "Artists",
     operation_id = "get_artist",
     params(("id" = i64, Path, minimum = 1, description = "Artist identifier")),
     responses(
@@ -123,7 +123,7 @@ async fn get_artist(
 
 /// List artists using a bounded page in ascending identifier order.
 #[utoipa::path(
-    get, path = "/artists", tag = "artists", operation_id = "list_artists",
+    get, path = "/artists", tag = "Artists", operation_id = "list_artists",
     params(Pagination),
     responses(
         (status = 200, body = ArtistPage, description = "Artist page"),

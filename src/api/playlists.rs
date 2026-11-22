@@ -126,7 +126,7 @@ struct PlaylistTrackPage {
 
 /// Create an empty private playlist; names may repeat and do not imply
 /// favorites.
-#[utoipa::path(post, path = "/me/playlists", tag = "playlists",
+#[utoipa::path(post, path = "/me/playlists", tag = "Playlists",
     operation_id = "create_playlist", request_body = CreatePlaylist,
     security(("personal_key" = [])), responses(
         (status = 201, body = Playlist, description = "Playlist created",
@@ -156,7 +156,7 @@ async fn create_playlist(
 }
 
 /// List only the authenticated account's playlist metadata.
-#[utoipa::path(get, path = "/me/playlists", tag = "playlists",
+#[utoipa::path(get, path = "/me/playlists", tag = "Playlists",
     operation_id = "list_playlists", params(Pagination),
     security(("personal_key" = [])), responses(
         (status = 200, body = PlaylistPage, description = "Owned playlists"),
@@ -180,7 +180,7 @@ async fn list_playlists(
 }
 
 /// Read owned metadata; other users' playlists also receive 404.
-#[utoipa::path(get, path = "/me/playlists/{id}", tag = "playlists",
+#[utoipa::path(get, path = "/me/playlists/{id}", tag = "Playlists",
     operation_id = "get_playlist",
     params(("id" = i64, Path, minimum = 1, description = "Playlist ID")),
     security(("personal_key" = [])), responses(
@@ -202,7 +202,7 @@ async fn get_playlist(
 }
 
 /// Replace name/description using the current version; preserve content order.
-#[utoipa::path(put, path = "/me/playlists/{id}", tag = "playlists",
+#[utoipa::path(put, path = "/me/playlists/{id}", tag = "Playlists",
     operation_id = "edit_playlist", request_body = EditPlaylist,
     params(("id" = i64, Path, minimum = 1, description = "Playlist ID")),
     security(("personal_key" = [])), responses(
@@ -235,7 +235,7 @@ async fn edit_playlist(
 }
 
 /// Delete metadata and occurrences only, requiring the current version query.
-#[utoipa::path(delete, path = "/me/playlists/{id}", tag = "playlists",
+#[utoipa::path(delete, path = "/me/playlists/{id}", tag = "Playlists",
     operation_id = "delete_playlist", params(DeleteVersion,
         ("id" = i64, Path, minimum = 1, description = "Playlist ID")),
     security(("personal_key" = [])), responses(
@@ -267,7 +267,7 @@ async fn delete_playlist(
 
 /// Page ordered recordings with the matching version; repeated IDs stay
 /// distinct.
-#[utoipa::path(get, path = "/me/playlists/{id}/tracks", tag = "playlists",
+#[utoipa::path(get, path = "/me/playlists/{id}/tracks", tag = "Playlists",
     operation_id = "get_playlist_tracks", params(Pagination,
         ("id" = i64, Path, minimum = 1, description = "Playlist ID")),
     security(("personal_key" = [])), responses(
@@ -299,7 +299,7 @@ async fn get_tracks(
 
 /// Atomically replace order/contents; stale versions cannot lose newer edits.
 /// Use a new ordered array to append, remove, repeat, reorder or clear tracks.
-#[utoipa::path(put, path = "/me/playlists/{id}/tracks", tag = "playlists",
+#[utoipa::path(put, path = "/me/playlists/{id}/tracks", tag = "Playlists",
     operation_id = "replace_playlist_tracks", request_body = ReplaceTracks,
     params(("id" = i64, Path, minimum = 1, description = "Playlist ID")),
     security(("personal_key" = [])), responses(
@@ -338,7 +338,7 @@ async fn replace_tracks(
 
 /// Publish/unpublish an owned playlist using the current mutation version.
 /// Visibility changes do not grant editing rights to other accounts.
-#[utoipa::path(put, path = "/me/playlists/{id}/visibility", tag = "playlists",
+#[utoipa::path(put, path = "/me/playlists/{id}/visibility", tag = "Playlists",
     operation_id = "set_playlist_visibility", request_body = SetVisibility,
     params(("id" = i64, Path, minimum = 1, description = "Playlist ID")),
     security(("personal_key" = [])), responses(
@@ -374,7 +374,7 @@ async fn set_visibility(
 }
 
 /// Discover currently published playlists; anonymous browsing is not allowed.
-#[utoipa::path(get, path = "/playlists", tag = "playlists",
+#[utoipa::path(get, path = "/playlists", tag = "Playlists",
     operation_id = "list_published_playlists", params(Pagination),
     security(("personal_key" = [])), responses(
         (status = 200, body = PlaylistPage, description = "Published lists"),
@@ -398,7 +398,7 @@ async fn list_published(
 }
 
 /// Read published metadata; private and missing playlists both return 404.
-#[utoipa::path(get, path = "/playlists/{id}", tag = "playlists",
+#[utoipa::path(get, path = "/playlists/{id}", tag = "Playlists",
     operation_id = "get_published_playlist",
     params(("id" = i64, Path, minimum = 1, description = "Playlist ID")),
     security(("personal_key" = [])), responses(
@@ -420,7 +420,7 @@ async fn get_published(
 }
 
 /// Read published contents in the same snapshot as visibility and version.
-#[utoipa::path(get, path = "/playlists/{id}/tracks", tag = "playlists",
+#[utoipa::path(get, path = "/playlists/{id}/tracks", tag = "Playlists",
     operation_id = "get_published_playlist_tracks", params(Pagination,
         ("id" = i64, Path, minimum = 1, description = "Playlist ID")),
     security(("personal_key" = [])), responses(

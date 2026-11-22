@@ -65,7 +65,7 @@ struct RecordingPage {
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    post, path = "/recordings", tag = "recordings",
+    post, path = "/recordings", tag = "Admin: Catalog",
     operation_id = "create_recording", request_body = CreateRecording,
     security(("personal_key" = [])),
     responses(
@@ -110,7 +110,7 @@ async fn create_recording(
 
 /// Retrieve one recording with credits in their original order.
 #[utoipa::path(
-    get, path = "/recordings/{id}", tag = "recordings",
+    get, path = "/recordings/{id}", tag = "Recordings",
     operation_id = "get_recording",
     params(("id" = i64, Path, minimum = 1, description = "Recording ID")),
     responses(
@@ -135,7 +135,7 @@ async fn get_recording(
 
 /// List whole recordings, including all credits, in ascending ID order.
 #[utoipa::path(
-    get, path = "/recordings", tag = "recordings",
+    get, path = "/recordings", tag = "Recordings",
     operation_id = "list_recordings",
     params(Pagination),
     responses(

@@ -223,7 +223,7 @@ fn accepted(job: DiscoveryJob) -> Response {
 }
 
 /// Read explicit and inferred preferences without contacting providers.
-#[utoipa::path(get, path = "/me/discovery/profile", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/profile", tag = "Discovery",
     operation_id = "get_profile",
     security(("personal_key" = [])), responses(
         (status = 200, description = "Personal discovery result",
@@ -243,7 +243,7 @@ async fn get_profile(
 }
 
 /// Replace onboarding artist follows/tags using a version precondition.
-#[utoipa::path(put, path = "/me/discovery/preferences", tag = "discovery",
+#[utoipa::path(put, path = "/me/discovery/preferences", tag = "Discovery",
     operation_id = "set_preferences",
     request_body = Preferences,
     security(("personal_key" = [])), responses(
@@ -271,7 +271,7 @@ async fn set_preferences(
 
 /// Generate or refresh an owned collection; external results stay outside
 /// catalog.
-#[utoipa::path(post, path = "/me/discovery/feeds", tag = "discovery",
+#[utoipa::path(post, path = "/me/discovery/feeds", tag = "Discovery",
     operation_id = "create_feed",
     request_body = FeedRequest,
     security(("personal_key" = [])), responses(
@@ -296,7 +296,7 @@ async fn create_feed(
 }
 
 /// List only this account's saved discovery collections.
-#[utoipa::path(get, path = "/me/discovery/feeds", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/feeds", tag = "Discovery",
     operation_id = "list_feeds",
     params(Pagination),
     security(("personal_key" = [])), responses(
@@ -325,7 +325,7 @@ async fn list_feeds(
 }
 
 /// Read collection metadata, provenance, generation time and safe warnings.
-#[utoipa::path(get, path = "/me/discovery/feeds/{id}", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/feeds/{id}", tag = "Discovery",
     operation_id = "get_feed",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])), responses(
@@ -348,7 +348,7 @@ async fn get_feed(
 }
 
 /// Read live-ranked suggestions or original source order with private filters.
-#[utoipa::path(get, path = "/me/discovery/feeds/{id}/items", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/feeds/{id}/items", tag = "Discovery",
     operation_id = "get_items",
     params(("id" = i64, Path, minimum = 1),ItemQuery),
     security(("personal_key" = [])), responses(
@@ -408,7 +408,7 @@ async fn get_items(
 
 /// Refresh a saved definition; old contents survive failed external requests.
 #[utoipa::path(post, path = "/me/discovery/feeds/{id}/refresh",
-    tag = "discovery",
+    tag = "Discovery",
     operation_id = "refresh_feed",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])), responses(
@@ -433,7 +433,7 @@ async fn refresh_feed(
 }
 
 /// Read a previously seen candidate, including a hidden retained decision.
-#[utoipa::path(get, path = "/me/discovery/candidates/{id}", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/candidates/{id}", tag = "Discovery",
     operation_id = "get_candidate",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])), responses(
@@ -457,7 +457,7 @@ async fn get_candidate(
 
 /// Like/dislike, hide or retain acquisition intent before downloading exists.
 #[utoipa::path(put, path = "/me/discovery/candidates/{id}/feedback",
-    tag = "discovery",
+    tag = "Discovery",
     operation_id = "set_feedback",
     params(("id" = i64, Path, minimum = 1)),
     request_body = Feedback,
@@ -487,7 +487,7 @@ async fn set_feedback(
 }
 
 /// Read acquisition intent, including external recordings and whole releases.
-#[utoipa::path(get, path = "/me/discovery/wishlist", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/wishlist", tag = "Discovery",
     operation_id = "get_wishlist",
     params(Pagination),
     security(("personal_key" = [])), responses(
@@ -516,7 +516,7 @@ async fn get_wishlist(
 }
 
 /// List only this account's refresh history.
-#[utoipa::path(get, path = "/me/discovery/jobs", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/jobs", tag = "Discovery",
     operation_id = "list_jobs",
     params(Pagination),
     security(("personal_key" = [])), responses(
@@ -545,7 +545,7 @@ async fn list_jobs(
 }
 
 /// Read one owned refresh status, including crash interruption.
-#[utoipa::path(get, path = "/me/discovery/jobs/{id}", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/jobs/{id}", tag = "Discovery",
     operation_id = "get_job",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])), responses(
@@ -569,7 +569,7 @@ async fn get_job(
 
 /// Copy eligible matched recordings into a private ordinary playlist.
 #[utoipa::path(post, path = "/me/discovery/feeds/{id}/playlist",
-    tag = "discovery",
+    tag = "Discovery",
     operation_id = "export_playlist",
     params(("id" = i64, Path, minimum = 1)),
     request_body = ExportPlaylist,
@@ -646,7 +646,7 @@ impl Default for DecisionQuery {
 }
 
 /// Review prior likes, dislikes and hidden items after a source feed refresh.
-#[utoipa::path(get, path = "/me/discovery/feedback", tag = "discovery",
+#[utoipa::path(get, path = "/me/discovery/feedback", tag = "Discovery",
     operation_id = "list_discovery_feedback", params(DecisionQuery),
     security(("personal_key" = [])),responses(
         (status = 200, description = "Retained discovery decisions",

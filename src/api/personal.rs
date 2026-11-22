@@ -51,7 +51,7 @@ struct FavoritePage {
 }
 
 /// Read the authenticated identity without credential information.
-#[utoipa::path(get, path = "/me", tag = "personal",
+#[utoipa::path(get, path = "/me", tag = "Account",
     security(("personal_key" = [])), responses(
         (status = 200, body = User, description = "Current account"),
         (status = 401, response = ErrorResponse),
@@ -62,7 +62,7 @@ async fn me(CurrentUser(user): CurrentUser) -> Json<User> {
 }
 
 /// Read an assessment; neutral returns null for existing recordings.
-#[utoipa::path(get, path = "/me/recordings/{id}/reaction", tag = "personal",
+#[utoipa::path(get, path = "/me/recordings/{id}/reaction", tag = "Favorites",
     security(("personal_key" = [])),
     params(("id" = i64, Path, minimum = 1, description = "Recording ID")),
     responses(
@@ -87,7 +87,7 @@ async fn get_reaction(
 }
 
 /// Replace an assessment; repeated likes preserve their favorites position.
-#[utoipa::path(put, path = "/me/recordings/{id}/reaction", tag = "personal",
+#[utoipa::path(put, path = "/me/recordings/{id}/reaction", tag = "Favorites",
     security(("personal_key" = [])), request_body = SetReaction,
     params(("id" = i64, Path, minimum = 1, description = "Recording ID")),
     responses(
@@ -120,7 +120,8 @@ async fn set_reaction(
 }
 
 /// Clear the assessment and remove the recording from favorites atomically.
-#[utoipa::path(delete, path = "/me/recordings/{id}/reaction", tag = "personal",
+#[utoipa::path(delete, path = "/me/recordings/{id}/reaction",
+    tag = "Favorites",
     security(("personal_key" = [])),
     params(("id" = i64, Path, minimum = 1, description = "Recording ID")),
     responses(
@@ -145,7 +146,7 @@ async fn clear_reaction(
 }
 
 /// Read this user's current likes, with catalog titles and bounded pagination.
-#[utoipa::path(get, path = "/me/favorites", tag = "personal",
+#[utoipa::path(get, path = "/me/favorites", tag = "Favorites",
     security(("personal_key" = [])), params(Pagination), responses(
         (status = 200, body = FavoritePage, description = "Favorites"),
         (status = 400, response = ErrorResponse),

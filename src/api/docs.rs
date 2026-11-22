@@ -21,6 +21,17 @@ use super::error::ErrorResponse;
         description = "Self-hosted music server HTTP API, version 1.
 All API operations are served under `/api/v1`.
 
+Sections follow the client workflow: sign in, browse the catalog, play music,
+manage personal collections, discover music and acquire selected tracks.
+Sections prefixed `Admin:` require the administrator role. Catalog reads,
+search and artwork are currently public; playback and personal data require
+an active Bearer credential. Each operation documents its own permissions.
+
+Library scans and shared catalog maintenance are under `Admin: Library`
+and `Admin: Catalog`. Metadata corrections and external proposal review are
+separate workflows. Personal feed schedules stay with `Discovery`; global
+policy and metadata schedules are under `Admin: Automation`.
+
 Errors use a JSON envelope with `error.code` and `error.message`:
 - 400: `bad_request` — Malformed request or invalid parameters.
 - 401: `unauthorized` — Invalid/expired credential; Bearer challenge.
@@ -39,24 +50,50 @@ Internal failure details are logged on the server and never returned.
 HEAD responses have no body, including error responses."
     ),
     tags(
-        (name = "playlists", description = "Owned and published playlists"),
-        (name = "downloads", description = "Experimental member acquisition"),
-        (name = "automation", description = "Opt-in interval schedules"),
-        (name = "discovery", description = "Personal music discovery"),
-        (name = "metadata", description = "Catalog correction and enrichment"),
-        (name = "queue", description = "Personal playback queue"),
-        (name = "history", description = "Personal playback history"),
-        (name = "users", description = "Administrative account management"),
-        (name = "auth", description = "Password login and session logout"),
-        (name = "personal", description = "Account, reactions and favorites"),
-        (name = "system", description = "Process health"),
-        (name = "search", description = "Shared catalog search"),
-        (name = "artists", description = "Shared artist catalog"),
-        (name = "releases", description = "Releases and artist credits"),
-        (name = "recordings", description = "Independent musical recordings"),
-        (name = "release_tracks", description = "Tracks within releases"),
-        (name = "audio_files", description = "File metadata and source tags"),
-        (name = "library_scans", description = "Background library indexing")
+        (name = "Authentication", description =
+            "Password login and session logout."),
+        (name = "Account", description =
+            "Current account identity and role."),
+        (name = "Search", description =
+            "Search the shared music catalog."),
+        (name = "Artists", description =
+            "Browse artists in the shared catalog."),
+        (name = "Releases", description =
+            "Browse releases, credits and ordered track lists."),
+        (name = "Recordings", description =
+            "Browse recordings, independent of releases and files."),
+        (name = "Audio files", description =
+            "Registered formats, measured properties and source tags."),
+        (name = "Artwork", description =
+            "Catalog covers and cache validators. Currently public."),
+        (name = "Playback", description =
+            "Authenticated audio delivery and byte-range seeking."),
+        (name = "Queue", description =
+            "Personal persistent queue and playback position."),
+        (name = "Favorites", description =
+            "Personal recording reactions and dynamic favorites."),
+        (name = "History", description =
+            "Completed playback facts and personal history."),
+        (name = "Playlists", description =
+            "Owned playlists and playlists published in the instance."),
+        (name = "Discovery", description =
+            "Preferences, feeds, decisions, wishlist and feed schedules."),
+        (name = "Downloads", description =
+            "Experimental source search, acquisition and job progress."),
+        (name = "Admin: Users", description =
+            "Administrator only: accounts and credentials."),
+        (name = "Admin: Catalog", description =
+            "Administrator only: catalog creation and file registration."),
+        (name = "Admin: Library", description =
+            "Administrator only: scans, reports and duplicate inspection."),
+        (name = "Admin: Metadata", description =
+            "Administrator only: corrections, revisions, covers and links."),
+        (name = "Admin: Enrichment", description =
+            "Administrator only: lookups, identification and reviews."),
+        (name = "Admin: Automation", description =
+            "Administrator only: global policy and metadata schedules."),
+        (name = "System", description =
+            "Process health.")
     ),
     components(schemas(ErrorResponse), responses(ErrorResponse)),
     modifiers(&PersonalSecurity)
@@ -87,9 +124,13 @@ pub(super) fn attach(
 ) -> Router {
     if config.enabled {
         router.merge(
-            SwaggerUi::new("/docs")
-                .url("/openapi.json", schema)
-                .config(SwaggerConfig::default().validator_url("none")),
+            SwaggerUi::new("/docs").url("/openapi.json", schema).config(
+                SwaggerConfig::default()
+                    .validator_url("none")
+                    .filter(true)
+                    .doc_expansion("none")
+                    .deep_linking(true),
+            ),
         )
     } else {
         router
@@ -166,6 +207,9 @@ mod tests {
         let script = std::str::from_utf8(&script).unwrap();
         assert!(script.contains("/openapi.json"));
         assert!(script.contains(r#""validatorUrl": "none""#));
+        assert!(script.contains(r#""filter": true"#));
+        assert!(script.contains(r#""docExpansion": "none""#));
+        assert!(script.contains(r#""deepLinking": true"#));
 
         let response = get("/docs/swagger-ui-bundle.js", true).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -191,7 +235,7 @@ mod tests {
         assert_eq!(schema["info"]["version"], env!("CARGO_PKG_VERSION"));
         let operation = &schema["paths"]["/api/v1/health"]["get"];
         assert_eq!(operation["operationId"], "get_health");
-        assert_eq!(operation["tags"][0], "system");
+        assert_eq!(operation["tags"][0], "System");
         let response = &operation["responses"]["200"]["content"];
         assert_eq!(
             response["application/json"]["schema"]["$ref"],
@@ -217,6 +261,83 @@ mod tests {
         );
         assert_eq!(schema["paths"].as_object().unwrap().len(), 74);
         assert!(schema["paths"].get("/health").is_none());
+    }
+
+    /// Stable workflow sections prevent duplicate operations and hidden admin
+    /// scope.
+    #[tokio::test]
+    async fn schema_groups_client_workflows_before_administration() {
+        use std::collections::HashSet;
+
+        let response = get("/openapi.json", true).await;
+        let bytes = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
+        let schema: Value = serde_json::from_slice(&bytes).unwrap();
+        let sections: Vec<_> = schema["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tag| tag["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(sections.first(), Some(&"Authentication"));
+        assert_eq!(sections.get(1), Some(&"Account"));
+        assert_eq!(sections.last(), Some(&"System"));
+        let admin_start = sections
+            .iter()
+            .position(|tag| tag.starts_with("Admin:"))
+            .unwrap();
+        assert!(
+            sections[admin_start..sections.len() - 1]
+                .iter()
+                .all(|tag| tag.starts_with("Admin:"))
+        );
+        let declared: HashSet<_> = sections.iter().copied().collect();
+        assert_eq!(declared.len(), sections.len());
+        let mut used = HashSet::new();
+        for methods in schema["paths"].as_object().unwrap().values() {
+            for method in ["get", "put", "post", "delete", "patch", "head"] {
+                let Some(operation) = methods.get(method) else {
+                    continue;
+                };
+                let tags = operation["tags"].as_array().unwrap();
+                assert_eq!(
+                    tags.len(),
+                    1,
+                    "Every operation belongs to one section"
+                );
+                let section = tags[0].as_str().unwrap();
+                assert!(
+                    declared.contains(section),
+                    "Undeclared section {section}"
+                );
+                used.insert(section);
+                if section.starts_with("Admin:") {
+                    assert!(
+                        operation["security"][0]["personal_key"].is_array()
+                    );
+                    assert!(operation["responses"]["401"].is_object());
+                    assert!(operation["responses"]["403"].is_object());
+                }
+            }
+        }
+        assert_eq!(used, declared, "No empty future or forgotten sections");
+        for (path, method, section) in [
+            ("/artists", "get", "Artists"),
+            ("/artists", "post", "Admin: Catalog"),
+            ("/recordings/{id}/files/{file_id}/stream", "get", "Playback"),
+            ("/artwork/{kind}/{id}", "get", "Artwork"),
+            (
+                "/metadata/candidates/{id}/artwork",
+                "get",
+                "Admin: Enrichment",
+            ),
+            ("/me/discovery/feeds/{id}/schedule", "put", "Discovery"),
+            ("/metadata/{kind}/{id}/schedule", "put", "Admin: Automation"),
+        ] {
+            assert_eq!(
+                schema["paths"][format!("/api/v1{path}")][method]["tags"][0],
+                section
+            );
+        }
     }
 
     /// Artist operations expose paging, request schemas, and shared errors.

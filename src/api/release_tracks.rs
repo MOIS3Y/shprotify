@@ -86,7 +86,7 @@ impl From<TrackError> for ApiError {
 ///
 /// Requires the administrator role.
 #[utoipa::path(
-    post, path = "/releases/{id}/tracks", tag = "release_tracks",
+    post, path = "/releases/{id}/tracks", tag = "Admin: Catalog",
     operation_id = "create_release_track", request_body = CreateTrack,
     params(("id" = i64, Path, minimum = 1, description = "Release ID")),
     security(("personal_key" = [])),
@@ -132,7 +132,7 @@ async fn create_track(
 
 /// Retrieve a track occurrence belonging to the specified release.
 #[utoipa::path(
-    get, path = "/releases/{id}/tracks/{track_id}", tag = "release_tracks",
+    get, path = "/releases/{id}/tracks/{track_id}", tag = "Releases",
     operation_id = "get_release_track",
     params(
         ("id" = i64, Path, minimum = 1, description = "Release ID"),
@@ -160,7 +160,7 @@ async fn get_track(
 
 /// Read a release's tracklist in disc and position order.
 #[utoipa::path(
-    get, path = "/releases/{id}/tracks", tag = "release_tracks",
+    get, path = "/releases/{id}/tracks", tag = "Releases",
     operation_id = "list_release_tracks",
     params(("id" = i64, Path, minimum = 1, description = "Release ID"),
         Pagination),

@@ -60,7 +60,7 @@ struct SetPlayback {
 }
 
 /// Read the complete bounded order and playback position from one snapshot.
-#[utoipa::path(get, path = "/me/queue", tag = "queue",
+#[utoipa::path(get, path = "/me/queue", tag = "Queue",
     operation_id = "get_queue", security(("personal_key" = [])), responses(
         (status = 200, body = Queue, description = "Personal queue snapshot"),
         (status = 401, response = ErrorResponse),
@@ -75,7 +75,7 @@ async fn get_queue(
 
 /// Replace the order and explicitly select an occurrence in the new order.
 /// Duplicate recordings are allowed; no-op requests preserve the version.
-#[utoipa::path(put, path = "/me/queue", tag = "queue",
+#[utoipa::path(put, path = "/me/queue", tag = "Queue",
     operation_id = "replace_queue", request_body = ReplaceQueue,
     security(("personal_key" = [])), responses(
         (status = 200, body = Queue, description = "Updated queue snapshot"),
@@ -113,7 +113,7 @@ async fn replace_queue(
 
 /// Persist a seek or selection; the client decides when to advance tracks.
 /// This does not create history, issue playback commands, or open audio files.
-#[utoipa::path(put, path = "/me/queue/playback", tag = "queue",
+#[utoipa::path(put, path = "/me/queue/playback", tag = "Queue",
     operation_id = "set_queue_playback", request_body = SetPlayback,
     security(("personal_key" = [])), responses(
         (status = 200, body = Queue, description = "Updated queue snapshot"),
