@@ -56,6 +56,27 @@ header such as `/api/v1/library/scans/1`. No request body or client-supplied
 directory is needed. Filesystem and audio work run outside HTTP handlers and
 async worker threads. A second active scan returns `409 Conflict`.
 
+### Exact duplicate reports
+
+```sh
+curl 'http://127.0.0.1:3000/api/v1/library/duplicates?limit=50&offset=0'
+```
+
+Each item contains `sha256`, `file_id`, `recording_id`, and `path`. The page
+is bounded by files (1–100, default 50), ordered by digest and file ID; one
+digest group can span pages. Only digests observed at multiple paths appear.
+Background and CLI probes hash the complete file, including tags/container
+bytes, in bounded memory. CLI reports retain their existing JSON format.
+
+Hashes commit with file metadata and filesystem observations. Failed probes
+invalidate previous hashes; unchanged files reuse committed observations.
+After upgrading, old filesystem snapshots are invalidated once so the next
+background scan computes missing hashes. Reports describe the last successful
+observations: missing paths are retained, and this endpoint does not recheck
+the filesystem. Files and recording identities are never automatically merged
+or removed. Different encodings and differently tagged copies require separate
+musical identity matching, which remains subsequent work.
+
 ```sh
 curl http://127.0.0.1:3000/api/v1/library/scans/1
 curl 'http://127.0.0.1:3000/api/v1/library/scans/1/errors?limit=50&offset=0'
@@ -178,4 +199,4 @@ The tag endpoint returns `404` for an unknown/wrongly scoped file or a manual
 registration never observed by background indexing. The read-only CLI does
 not persist observations. Scans never remove catalog entries for missing files
 or move, rename, write, or delete collection files. Global musical identity
-matching, duplicate detection, and efficient change detection remain future work.
+matching and cross-format duplicate detection remain future work.

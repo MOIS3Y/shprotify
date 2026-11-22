@@ -33,6 +33,9 @@ pub(crate) struct ScannedFile {
     /// Stable filesystem observation; unverified synthetic inputs have none.
     #[serde(skip)]
     pub(crate) state: Option<FileState>,
+    /// SHA-256 of the complete source bytes; absent for synthetic inputs.
+    #[serde(skip)]
+    pub(crate) sha256: Option<String>,
 }
 
 /// Common source tags; missing tags are represented explicitly as null.
@@ -94,12 +97,14 @@ pub(crate) fn read(path: &Path) -> Result<Option<ScannedFile>> {
     let properties = audio.properties();
     let duration = i64::try_from(properties.duration().as_millis())
         .context("Audio duration exceeds the catalog limit")?;
+    let sha256 = digest(&file)?;
     state.verify(&file, path)?;
     Ok(Some(ScannedFile {
         path: name.to_owned(),
         format: format_label(audio.file_type())?.to_owned(),
         tags,
         state: Some(state),
+        sha256: Some(sha256),
         properties: AudioProperties {
             size_bytes: Some(size).filter(|value| *value > 0),
             duration_ms: Some(duration).filter(|value| *value > 0),
@@ -121,6 +126,28 @@ pub(crate) fn read(path: &Path) -> Result<Option<ScannedFile>> {
                 .filter(|value| *value > 0),
         },
     }))
+}
+
+/// Hash every source byte in bounded memory, starting before the audio header.
+fn digest(file: &File) -> std::io::Result<String> {
+    let mut reader = BufReader::new(file);
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Seek};
+    reader.rewind()?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0_u8; 65536];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    Ok(hash
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 /// Map detected formats to stable labels rather than Rust debug names.
@@ -147,6 +174,26 @@ pub(crate) mod tests {
     //! Independently constructed PCM/RIFF fixtures and malformed input.
 
     use super::*;
+
+    /// Full-file hashing matches SHA-256's standard abc vector after seeking.
+    #[test]
+    fn hashes_complete_contents_from_the_start() {
+        use std::io::{Read, Seek};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("bytes");
+        std::fs::write(&path, b"abc").unwrap();
+        let mut file = File::open(path).unwrap();
+        let mut first = [0];
+        file.read_exact(&mut first).unwrap();
+        assert_eq!(
+            digest(&file).unwrap(),
+            concat!(
+                "ba7816bf8f01cfea414140de5dae2223",
+                "b00361a396177a9cb410ff61f20015ad"
+            )
+        );
+        file.rewind().unwrap();
+    }
 
     /// Build one second of mono 16-bit PCM with standard RIFF INFO tags.
     pub(crate) fn wave() -> Vec<u8> {

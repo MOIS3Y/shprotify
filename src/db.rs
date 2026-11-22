@@ -6,6 +6,7 @@
 
 pub(crate) mod artists;
 pub(crate) mod audio_files;
+pub(crate) mod duplicates;
 pub(crate) mod indexing;
 mod matching;
 pub(crate) mod recordings;
@@ -137,7 +138,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
         pool.close().await;
     }
 
@@ -196,6 +197,7 @@ mod tests {
             job.id,
             crate::library::metadata::ScannedFile {
                 state: None,
+                sha256: None,
                 path: "/music/legacy.flac".into(),
                 format: "flac".into(),
                 tags: crate::library::metadata::AudioTags {

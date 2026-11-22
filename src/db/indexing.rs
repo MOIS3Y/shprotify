@@ -140,6 +140,22 @@ pub(crate) async fn store(
             .execute(&mut *transaction)
             .await?;
     }
+    if let Some(digest) = source.sha256 {
+        sqlx::query(
+            "INSERT INTO audio_file_hashes (file_id, sha256) \
+            VALUES (?, ?) ON CONFLICT(file_id) \
+            DO UPDATE SET sha256 = excluded.sha256",
+        )
+        .bind(file_id)
+        .bind(digest)
+        .execute(&mut *transaction)
+        .await?;
+    } else {
+        sqlx::query("DELETE FROM audio_file_hashes WHERE file_id = ?")
+            .bind(file_id)
+            .execute(&mut *transaction)
+            .await?;
+    }
     let updated = sqlx::query(
         "UPDATE library_scans SET imported = imported + ?, \
          refreshed = refreshed + ? WHERE id = ? AND status = 'running'",
@@ -209,6 +225,7 @@ mod tests {
         ScannedFile {
             path: path.into(),
             state: None,
+            sha256: None,
             format: "flac".into(),
             tags: AudioTags {
                 title: title.map(str::to_owned),

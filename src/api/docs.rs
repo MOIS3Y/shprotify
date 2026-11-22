@@ -182,7 +182,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 15);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 16);
         assert!(schema["paths"].get("/health").is_none());
     }
 

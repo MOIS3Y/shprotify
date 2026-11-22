@@ -184,6 +184,7 @@ mod tests {
         ScannedFile {
             path: path.into(),
             state: None,
+            sha256: None,
             format: "flac".into(),
             tags: AudioTags {
                 title: Some("Song".into()),

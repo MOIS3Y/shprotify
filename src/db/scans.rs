@@ -84,6 +84,13 @@ pub(crate) async fn record_error(
 ) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
     sqlx::query(
+        "DELETE FROM audio_file_hashes WHERE file_id IN \
+        (SELECT id FROM audio_files WHERE path = ?)",
+    )
+    .bind(path)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
         "DELETE FROM audio_file_states WHERE file_id IN \
         (SELECT id FROM audio_files WHERE path = ?)",
     )

@@ -3,6 +3,7 @@
 mod artists;
 mod audio_files;
 mod docs;
+mod duplicates;
 pub(crate) mod error;
 mod pagination;
 mod recordings;
@@ -37,6 +38,7 @@ pub(crate) fn router(
         .merge(recordings::router(pool.clone()))
         .merge(release_tracks::router(pool.clone()))
         .merge(audio_files::router(pool.clone()))
+        .merge(duplicates::router(pool.clone()))
         .merge(scans::router(pool.clone(), scans));
     let (router, schema) =
         OpenApiRouter::with_openapi(docs::ApiDoc::openapi())
