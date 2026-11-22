@@ -46,7 +46,22 @@
         packageArgs = commonArgs // {
           inherit cargoArtifacts;
         };
-        shprotify = craneLib.buildPackage packageArgs;
+        shprotify = craneLib.buildPackage (
+          packageArgs
+          // {
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postInstall = ''
+              wrapProgram "$out/bin/shprotify" \
+                --prefix PATH : ${
+                  pkgs.lib.makeBinPath [
+                    pkgs.yt-dlp
+                    pkgs.ffmpeg-headless
+                    pkgs.deno
+                  ]
+                }
+            '';
+          }
+        );
 
         app =
           flake-utils.lib.mkApp {
@@ -122,6 +137,9 @@
 
           packages = with pkgs; [
             nixfmt
+            yt-dlp
+            ffmpeg-headless
+            deno
             rust-analyzer
             tombi
           ];

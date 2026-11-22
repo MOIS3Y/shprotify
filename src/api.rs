@@ -4,6 +4,7 @@ mod artists;
 mod audio_files;
 mod discovery;
 mod docs;
+mod downloads;
 mod duplicates;
 pub(crate) mod error;
 mod history;
@@ -56,7 +57,14 @@ pub(crate) fn router(
         crate::config::DiscoveryConfig::default(),
     )
     .expect("Disabled discovery adapters need no configuration");
-    router_with_services(auth, config, pool, scans, metadata, discovery)
+    let downloads = crate::jobs::downloads::DownloadService::new(
+        pool.clone(),
+        crate::config::DownloadsConfig::default(),
+        None,
+    );
+    router_with_services(
+        auth, config, pool, scans, metadata, discovery, downloads,
+    )
 }
 
 /// Production routing with an application-owned metadata worker lifecycle.
@@ -67,12 +75,21 @@ pub(crate) fn router_with_services(
     scans: ScanService,
     metadata_service: crate::jobs::metadata::MetadataService,
     discovery_service: crate::jobs::discovery::DiscoveryService,
+    downloads_service: crate::jobs::downloads::DownloadService,
 ) -> Router {
+    let mut media_roots = scans.roots().as_ref().clone();
+    if let Some(root) = downloads_service.media_root() {
+        media_roots.push(root);
+    }
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
+        .merge(downloads::router(pool.clone(), downloads_service))
         .merge(discovery::router(pool.clone(), discovery_service))
         .merge(metadata::router(pool.clone(), metadata_service))
-        .merge(streaming::router(pool.clone(), scans.roots()))
+        .merge(streaming::router(
+            pool.clone(),
+            std::sync::Arc::new(media_roots),
+        ))
         .merge(sessions::router(pool.clone(), *auth))
         .merge(personal::router(pool.clone()))
         .merge(history::router(pool.clone()))

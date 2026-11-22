@@ -6,6 +6,7 @@
 //! accepted work before closing SQLite. Startup explicitly recovers old jobs.
 
 pub(crate) mod discovery;
+pub(crate) mod downloads;
 pub(crate) mod metadata;
 
 use std::{

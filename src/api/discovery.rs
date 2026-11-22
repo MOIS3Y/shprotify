@@ -789,6 +789,11 @@ mod tests {
                 scans,
                 metadata,
                 service.clone(),
+                crate::jobs::downloads::DownloadService::new(
+                    pool.clone(),
+                    crate::config::DownloadsConfig::default(),
+                    None,
+                ),
             );
             Self {
                 _dir: dir,

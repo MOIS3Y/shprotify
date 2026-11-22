@@ -3,6 +3,7 @@
 pub(crate) mod acoustid;
 pub(crate) mod discovery;
 pub(crate) mod musicbrainz;
+pub(crate) mod youtube;
 
 use anyhow::{Result, ensure};
 use reqwest::{Client, Response, Url};

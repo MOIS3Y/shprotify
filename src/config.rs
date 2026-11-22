@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Experimental audio acquisition and managed storage.
+    pub(crate) downloads: DownloadsConfig,
     /// Recommendation adapters, response caching and refresh admission.
     pub(crate) discovery: DiscoveryConfig,
     /// Optional external metadata services and acoustic identification.
@@ -37,6 +39,107 @@ pub(crate) struct Config {
     pub(crate) logging: LoggingConfig,
     /// Optional interactive API documentation and OpenAPI schema.
     pub(crate) docs: DocsConfig,
+}
+
+/// Bounded opt-in acquisition; members never supply executable arguments.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DownloadsConfig {
+    /// Enable acquisition endpoints and managed storage initialization.
+    pub(crate) enabled: bool,
+    /// Exclusive managed root; must not overlap external library roots.
+    pub(crate) directory: PathBuf,
+    /// Concurrent provider processes, including searches; 1–4.
+    pub(crate) max_parallel_jobs: usize,
+    /// Total queued/active jobs across all users; 1–100.
+    pub(crate) max_pending_jobs: i64,
+    /// Queued/active jobs for one member or admin; 1–10.
+    pub(crate) max_user_jobs: i64,
+    /// Maximum encoded audio bytes per job; 1 MiB–1 GiB.
+    pub(crate) max_file_bytes: u64,
+    /// Download deadline including provider resolution; 30–1800 seconds.
+    pub(crate) timeout_seconds: u64,
+    /// Maximum accepted source/audio duration; 1–14400 seconds.
+    pub(crate) max_duration_seconds: u32,
+    /// Minimum interval between source searches per account; 1–300 seconds.
+    pub(crate) request_interval_seconds: u32,
+    /// Experimental YouTube adapter and executable paths.
+    pub(crate) youtube: YoutubeConfig,
+}
+
+impl Default for DownloadsConfig {
+    /// No process invocation or managed filesystem writes without opt-in.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            directory: PathBuf::new(),
+            max_parallel_jobs: 2,
+            max_pending_jobs: 20,
+            max_user_jobs: 3,
+            max_file_bytes: 256 * 1024 * 1024,
+            timeout_seconds: 600,
+            max_duration_seconds: 1800,
+            request_interval_seconds: 5,
+            youtube: YoutubeConfig::default(),
+        }
+    }
+}
+
+/// Server-owned tools; configuration never accepts arbitrary CLI flags.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct YoutubeConfig {
+    /// Explicitly enable the unstable YouTube provider.
+    pub(crate) enabled: bool,
+    /// yt-dlp binary or wrapper, resolved through PATH unless absolute.
+    pub(crate) yt_dlp_path: String,
+    /// FFmpeg used only for container extraction, without lossy re-encoding.
+    pub(crate) ffmpeg_path: String,
+    /// Deno runtime for bundled yt-dlp EJS scripts.
+    pub(crate) deno_path: String,
+}
+
+impl Default for YoutubeConfig {
+    /// Tool names supplied by the Nix package or development shell.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            yt_dlp_path: "yt-dlp".into(),
+            ffmpeg_path: "ffmpeg".into(),
+            deno_path: "deno".into(),
+        }
+    }
+}
+
+impl DownloadsConfig {
+    /// Reject resource limits and paths that cannot be safely represented.
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.enabled || !self.directory.as_os_str().is_empty(),
+            "downloads.directory is required when downloads are enabled"
+        );
+        ensure!(
+            (1..=4).contains(&self.max_parallel_jobs)
+                && (1..=100).contains(&self.max_pending_jobs)
+                && (1..=10).contains(&self.max_user_jobs)
+                && (1_048_576..=1_073_741_824).contains(&self.max_file_bytes)
+                && (30..=1800).contains(&self.timeout_seconds)
+                && (1..=14400).contains(&self.max_duration_seconds)
+                && (1..=300).contains(&self.request_interval_seconds),
+            "Invalid downloads resource limits"
+        );
+        for path in [
+            &self.youtube.yt_dlp_path,
+            &self.youtube.ffmpeg_path,
+            &self.youtube.deno_path,
+        ] {
+            ensure!(
+                !path.trim().is_empty() && !path.chars().any(char::is_control),
+                "Download tool paths must be nonblank without controls"
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Optional discovery providers; local recommendations need no external key.
@@ -305,6 +408,7 @@ impl Config {
                     .contains(&config.discovery.refresh_interval_seconds),
             "Invalid discovery cache TTL or refresh interval"
         );
+        config.downloads.validate()?;
         Ok(config)
     }
 }
@@ -318,6 +422,46 @@ mod tests {
     /// Load inline TOML over defaults without reading the process environment.
     fn from_toml(contents: &str) -> Result<Config> {
         Config::extract(Config::sources(None)?.merge(Toml::string(contents)))
+    }
+
+    /// Download defaults are inert; enabled acquisition requires bounded
+    /// policy.
+    #[test]
+    fn validates_experimental_download_limits_and_tool_paths() {
+        let config = from_toml("").unwrap();
+        assert!(!config.downloads.enabled);
+        assert!(!config.downloads.youtube.enabled);
+        assert!(config.downloads.directory.as_os_str().is_empty());
+        let enabled = from_toml(
+            "[downloads]\nenabled=true\ndirectory='dev/downloads'\n\
+             [downloads.youtube]\nenabled=true",
+        )
+        .unwrap();
+        assert!(enabled.downloads.enabled);
+        for input in [
+            "enabled=true",
+            "max_parallel_jobs=0",
+            "max_parallel_jobs=5",
+            "max_pending_jobs=101",
+            "max_user_jobs=0",
+            "max_user_jobs=11",
+            "max_file_bytes=1048575",
+            "max_file_bytes=1073741825",
+            "timeout_seconds=29",
+            "timeout_seconds=1801",
+            "max_duration_seconds=0",
+            "max_duration_seconds=14401",
+            "request_interval_seconds=0",
+            "request_interval_seconds=301",
+            "unknown=true",
+            "youtube={yt_dlp_path=''}",
+            "youtube={extra_flags='--exec shell'}",
+        ] {
+            assert!(
+                from_toml(&format!("[downloads]\n{input}")).is_err(),
+                "accepted {input}"
+            );
+        }
     }
 
     /// Defaults provide every setting when no file is supplied.

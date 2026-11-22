@@ -7,6 +7,8 @@
 pub(crate) mod artists;
 pub(crate) mod audio_files;
 pub(crate) mod discovery;
+pub(crate) mod download_import;
+pub(crate) mod downloads;
 pub(crate) mod duplicates;
 pub(crate) mod history;
 pub(crate) mod indexing;
@@ -88,6 +90,64 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// Acquisition upgrades preserve existing reactions and remember clears.
+    #[tokio::test]
+    async fn upgrades_discovery_without_losing_favorites_or_catalog_data() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let old = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version <= 20)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &old).await.unwrap();
+        users::create(&pool, "legacy", &crate::auth::digest("legacy"))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Original')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO recording_reactions \
+            (user_id,recording_id,reaction,changed_at) \
+            VALUES (1,1,'like','2000-01-01T00:00:00.000Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        assert_eq!(
+            reactions::favorites(&pool, 1, 50, 0).await.unwrap().len(),
+            1
+        );
+        assert!(downloads::jobs(&pool, 1, 50, 0).await.unwrap().is_empty());
+        reactions::set(&pool, 1, 1, None).await.unwrap();
+        let remembered: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM recording_reaction_decisions \
+            WHERE user_id=1 AND recording_id=1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remembered, 1);
+        sqlx::query("DELETE FROM users WHERE id=1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let decisions: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM recording_reaction_decisions",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(decisions, 0);
+        pool.close().await;
+    }
 
     /// Discovery preserves metadata versions, favorites and playback queues.
     #[tokio::test]
@@ -358,12 +418,14 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        reactions::set(
-            &pool,
-            1,
-            1,
-            Some(crate::library::reactions::Reaction::Like),
+        // Seed the old schema directly; the current DAL includes decision
+        // tracking introduced by a later migration.
+        sqlx::query(
+            "INSERT INTO recording_reactions \
+            (user_id,recording_id,reaction,changed_at) \
+            VALUES (1,1,'like',strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
         )
+        .execute(&pool)
         .await
         .unwrap();
         history::record(
@@ -417,12 +479,14 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        reactions::set(
-            &pool,
-            1,
-            1,
-            Some(crate::library::reactions::Reaction::Like),
+        // Seed the old schema directly; the current DAL includes decision
+        // tracking introduced by a later migration.
+        sqlx::query(
+            "INSERT INTO recording_reactions \
+            (user_id,recording_id,reaction,changed_at) \
+            VALUES (1,1,'like',strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
         )
+        .execute(&pool)
         .await
         .unwrap();
         pool.close().await;
@@ -682,7 +746,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=20).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=21).collect::<Vec<_>>());
         pool.close().await;
     }
 

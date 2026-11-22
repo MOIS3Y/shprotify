@@ -95,10 +95,34 @@ pub(crate) async fn run() -> Result<()> {
                 .context("Failed to initialize discovery adapters");
         }
     };
+    let storage = if config.downloads.directory.as_os_str().is_empty() {
+        None
+    } else {
+        let path = config.downloads.directory.clone();
+        let external = scans.roots();
+        Some(
+            tokio::task::spawn_blocking(move || {
+                crate::downloads::storage::Storage::prepare(&path, &external)
+            })
+            .await
+            .context("Managed storage worker failed")??,
+        )
+    };
+    let downloads = crate::jobs::downloads::DownloadService::new(
+        database.clone(),
+        config.downloads.clone(),
+        storage,
+    );
+    if let Err(error) = downloads.recover().await {
+        database.close().await;
+        return Err(error).context("Failed to recover acquisition jobs");
+    }
     let result = serve_http(
-        &config, &database, &scans, &metadata, &discovery, shutdown,
+        &config, &database, &scans, &metadata, &discovery, &downloads,
+        shutdown,
     )
     .await;
+    downloads.close().await;
     discovery.close().await;
     metadata.close().await;
     scans.close().await;
@@ -138,6 +162,7 @@ async fn serve_http(
     scans: &ScanService,
     metadata: &crate::jobs::metadata::MetadataService,
     discovery: &crate::jobs::discovery::DiscoveryService,
+    downloads: &crate::jobs::downloads::DownloadService,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
     let address = config.http.bind;
@@ -158,6 +183,7 @@ async fn serve_http(
             scans.clone(),
             metadata.clone(),
             discovery.clone(),
+            downloads.clone(),
         ),
     )
     .with_graceful_shutdown(shutdown)

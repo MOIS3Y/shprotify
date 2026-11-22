@@ -83,3 +83,36 @@ musicbrainz_enabled = false
 cache_ttl_seconds = 3600
 # Per-account accepted-refresh interval: 1..3600 seconds; global worker limit 1.
 refresh_interval_seconds = 60
+
+[downloads]
+# Experimental acquisition for any authenticated member/admin, off by default.
+# Provider failures affect only their jobs. See examples/downloads.md.
+enabled = false
+# Exclusive server-owned storage, separate from library.directories.
+# Empty means no managed storage. Set to "dev/downloads" for local development.
+# Created with mode 0700; existing directories must already be private.
+# Keep configured to stream existing imports even when downloads are disabled.
+directory = ""
+# Concurrent searches/downloads/verifications/imports: 1..4.
+max_parallel_jobs = 2
+# Global queued + active jobs: 1..100; per account: 1..10.
+max_pending_jobs = 20
+max_user_jobs = 3
+# Maximum encoded audio size: 1 MiB..1 GiB. Remuxing can use twice this space.
+max_file_bytes = 268435456
+# Provider download timeout: 30..1800 seconds. Source searches time out at 60 s.
+timeout_seconds = 600
+# Maximum track/source duration: 1..14400 seconds. No live streams.
+max_duration_seconds = 1800
+# Per-account source-search cooldown: 1..300 seconds.
+request_interval_seconds = 5
+
+[downloads.youtube]
+# Unstable external source: no availability guarantee; explicit source choice.
+# Both downloads.enabled and this switch must be true to accept new jobs.
+enabled = false
+# Nix package/dev shell supplies these tools. Trusted server paths only.
+# yt-dlp must include yt-dlp-ejs. No runtime self-updates or script downloads.
+yt_dlp_path = "yt-dlp"
+ffmpeg_path = "ffmpeg"
+deno_path = "deno"

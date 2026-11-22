@@ -73,6 +73,16 @@ pub(crate) fn read(path: &Path) -> Result<Option<ScannedFile>> {
         "File path must be absolute, at most 4096 bytes, without controls"
     );
     let file = File::open(path).context("Cannot open file for reading")?;
+    read_opened(path, file)
+}
+
+/// Probe an already securely opened descriptor, verifying its path snapshot.
+/// Callers retain responsibility for restricting the source to allowed roots.
+pub(crate) fn read_opened(
+    path: &Path,
+    file: File,
+) -> Result<Option<ScannedFile>> {
+    let name = path.to_str().context("File path is not UTF-8")?;
     let metadata = file.metadata()?;
     let state = FileState::from_metadata(&metadata)?;
     let size = i64::try_from(metadata.len())

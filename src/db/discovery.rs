@@ -526,6 +526,15 @@ async fn decorate(
     user: i64,
     rows: Vec<ItemRow>,
 ) -> Result<Vec<Recommendation>, DiscoveryError> {
+    let candidate_ids: Vec<_> = rows.iter().map(|r| r.id).collect();
+    let links: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT candidate_id,recording_id FROM discovery_download_links \
+        WHERE candidate_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(Json(candidate_ids))
+    .fetch_all(&mut *c)
+    .await?;
+    let linked_ids: Vec<_> = links.iter().map(|(_, id)| *id).collect();
     let documents: Vec<_> = rows.iter().map(|r| &r.document).collect();
     let matches: Vec<LocalMatch> = sqlx::query_as(
         "WITH wanted AS (SELECT json_extract(value,'$.title') title, \
@@ -540,6 +549,7 @@ async fn decorate(
           ON m.entity_type='recording' AND m.entity_id=r.id \
         WHERE r.title COLLATE NOCASE IN (SELECT title FROM wanted) \
           OR m.mbid IN (SELECT mbid FROM wanted) \
+          OR r.id IN (SELECT value FROM json_each(?)) \
         UNION ALL SELECT 'release',r.id,m.mbid,r.title, \
           COALESCE((SELECT json_group_array(json_object('name',a.name, \
             'mbid',NULL)) FROM (SELECT a.name FROM release_artists ra \
@@ -555,6 +565,7 @@ async fn decorate(
           OR m.mbid IN (SELECT mbid FROM wanted)",
     )
     .bind(Json(documents))
+    .bind(Json(linked_ids))
     .fetch_all(&mut *c)
     .await?;
     let ids: Vec<_> = matches
@@ -601,7 +612,16 @@ async fn decorate(
                         )
                 })
                 .collect();
-            let matched = if choices.len() == 1 {
+            let linked = links.iter().find(|(id, _)| *id == r.id).and_then(
+                |(_, id)| {
+                    matches
+                        .iter()
+                        .find(|m| m.kind == "recording" && m.id == *id)
+                },
+            );
+            let matched = if linked.is_some() {
+                linked
+            } else if choices.len() == 1 {
                 choices.first().copied()
             } else {
                 None
@@ -617,7 +637,9 @@ async fn decorate(
                 r.reaction
             };
             let method = matched.map(|_| {
-                if r.document.provider == "local" {
+                if linked.is_some() {
+                    "download_selection"
+                } else if r.document.provider == "local" {
                     "local"
                 } else if r.document.mbid.is_some() {
                     "mbid"

@@ -65,6 +65,19 @@ pub(crate) async fn set(
         .execute(&mut *tx)
         .await?;
     }
+    // Explicit reaffirmations and clears matter even when the visible reaction
+    // stays unchanged: a delayed external import must not restore an old like.
+    sqlx::query(
+        "INSERT INTO recording_reaction_decisions \
+        (user_id,recording_id,changed_at) \
+        VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) \
+        ON CONFLICT(user_id,recording_id) DO UPDATE \
+        SET changed_at=excluded.changed_at",
+    )
+    .bind(user)
+    .bind(recording)
+    .execute(&mut *tx)
+    .await?;
     let result = read(&mut tx, user, recording).await?;
     tx.commit().await?;
     Ok(result)
