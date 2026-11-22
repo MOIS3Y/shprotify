@@ -6,6 +6,7 @@ mod docs;
 mod duplicates;
 pub(crate) mod error;
 mod pagination;
+mod personal;
 mod recordings;
 mod release_tracks;
 mod releases;
@@ -34,6 +35,7 @@ pub(crate) fn router(
 ) -> Router {
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
+        .merge(personal::router(pool.clone()))
         .merge(artists::router(pool.clone()))
         .merge(releases::router(pool.clone()))
         .merge(recordings::router(pool.clone()))

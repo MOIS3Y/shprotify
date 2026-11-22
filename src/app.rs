@@ -37,6 +37,13 @@ pub(crate) async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = Config::load(cli.config.as_deref())?;
     logging::init(&config.logging)?;
+    if let Some(Command::User { command }) = &cli.command {
+        return crate::cli::run_user(
+            Path::new(&config.database.path),
+            command,
+        )
+        .await;
+    }
 
     let paths = config.library.directories;
     let roots =

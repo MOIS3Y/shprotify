@@ -5,6 +5,7 @@ pub(crate) mod directories;
 pub(crate) mod file_state;
 pub(crate) mod matching;
 pub(crate) mod metadata;
+pub(crate) mod reactions;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;

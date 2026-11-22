@@ -19,8 +19,77 @@ pub(crate) struct Cli {
 /// Explicit operations that share the server configuration.
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Manage local accounts and revocable personal bearer keys.
+    User {
+        /// Operation; generated credentials are printed once to stdout.
+        #[command(subcommand)]
+        command: UserCommand,
+    },
     /// Read tags/properties as JSON Lines without changing the catalog.
     Scan,
+}
+
+/// Account operations require local access to the configured SQLite database.
+#[derive(Debug, Subcommand)]
+pub(crate) enum UserCommand {
+    /// Create an account and print its first bearer key once as JSON.
+    Create {
+        /// Unique ASCII account name, normalized to lowercase.
+        #[arg(long)]
+        name: String,
+    },
+    /// Issue an additional bearer key for an existing account.
+    Token {
+        /// Existing account name.
+        #[arg(long)]
+        name: String,
+    },
+    /// Revoke every bearer key for an account without deleting personal data.
+    Revoke {
+        /// Existing account name.
+        #[arg(long)]
+        name: String,
+    },
+}
+
+/// Execute local account management and close SQLite even on operation errors.
+pub(crate) async fn run_user(
+    path: &std::path::Path,
+    command: &UserCommand,
+) -> anyhow::Result<()> {
+    use crate::{auth, db};
+    let name = match command {
+        UserCommand::Create { name }
+        | UserCommand::Token { name }
+        | UserCommand::Revoke { name } => auth::name(name)?,
+    };
+    let pool = db::connect(path).await?;
+    let result = async {
+        let output = match command {
+            UserCommand::Create { .. } | UserCommand::Token { .. } => {
+                let token = auth::token()?;
+                let digest = auth::digest(&token);
+                let user = if matches!(command, UserCommand::Create { .. }) {
+                    db::users::create(&pool, &name, &digest).await?
+                } else {
+                    db::users::issue(&pool, &name, &digest).await?
+                };
+                serde_json::json!({"user": user, "token": token})
+            }
+            UserCommand::Revoke { .. } => {
+                let user = db::users::revoke(&pool, &name).await?;
+                serde_json::json!({"user": user, "revoked": true})
+            }
+        };
+        use std::io::Write;
+        let mut stdout = std::io::stdout().lock();
+        serde_json::to_writer(&mut stdout, &output)?;
+        writeln!(stdout)?;
+        Ok(())
+    }
+    .await;
+    pool.close().await;
+    result
 }
 
 #[cfg(test)]
@@ -29,6 +98,26 @@ mod tests {
 
     use super::*;
     use clap::error::ErrorKind;
+
+    /// Account commands accept the shared config flag, never credential input.
+    #[test]
+    fn parses_local_user_management_commands() {
+        for operation in ["create", "token", "revoke"] {
+            let cli = Cli::try_parse_from([
+                "shprotify",
+                "user",
+                operation,
+                "--name",
+                "alice",
+                "--config",
+                "dev/config.toml",
+            ])
+            .unwrap();
+            assert!(matches!(cli.command, Some(Command::User { .. })));
+            assert_eq!(cli.config, Some(PathBuf::from("dev/config.toml")));
+        }
+        assert!(Cli::try_parse_from(["shprotify", "user", "create"]).is_err());
+    }
 
     /// Startup works without an explicit configuration file.
     #[test]

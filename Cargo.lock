@@ -1459,6 +1459,7 @@ dependencies = [
  "clap",
  "console",
  "figment2",
+ "getrandom",
  "indicatif",
  "lofty",
  "serde",

@@ -9,12 +9,14 @@ pub(crate) mod audio_files;
 pub(crate) mod duplicates;
 pub(crate) mod indexing;
 mod matching;
+pub(crate) mod reactions;
 mod recording_matches;
 pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
 pub(crate) mod scans;
 pub(crate) mod search;
+pub(crate) mod users;
 
 use std::{path::Path, time::Duration};
 
@@ -158,6 +160,49 @@ mod tests {
         pool.close().await;
     }
 
+    /// Adding personal data preserves legacy catalog identities and search.
+    #[tokio::test]
+    async fn upgrades_legacy_catalog_to_personal_reactions() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let previous = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 11)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        sqlx::query("INSERT INTO recordings (id, title) VALUES (1, 'Legacy')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let user = users::create(&pool, "alice", &crate::auth::digest("key"))
+            .await
+            .unwrap();
+        assert!(
+            reactions::find(&pool, user.id, 1)
+                .await
+                .unwrap()
+                .unwrap()
+                .reaction
+                .is_none()
+        );
+        assert!(
+            reactions::favorites(&pool, user.id, 50, 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            recordings::find(&pool, 1).await.unwrap().unwrap().title,
+            "Legacy"
+        );
+        pool.close().await;
+    }
+
     /// Resolve one test migration without adding test tables to the binary.
     async fn migrator(directory: &Path, sql: &str) -> Migrator {
         fs::write(directory.join("1_test.sql"), sql).unwrap();
@@ -218,7 +263,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
         pool.close().await;
     }
 

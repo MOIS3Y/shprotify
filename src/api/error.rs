@@ -8,6 +8,7 @@
 //! and `message`. Codes are stable identifiers for clients:
 //!
 //! - 400: `bad_request`, malformed JSON or invalid query/path parameters.
+//! - 401: `unauthorized`, absent/invalid key; includes `WWW-Authenticate`.
 //! - 413: `payload_too_large`, request body exceeds the extractor limit.
 //! - 415: `unsupported_media_type`, JSON content type is required.
 //! - 422: `validation_error`, invalid JSON fields or domain input.
@@ -28,6 +29,9 @@ use utoipa::ToSchema;
 /// HTTP failure with a stable client-facing code and message.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
+    /// Missing, malformed, or revoked personal bearer credential.
+    #[error("Authentication required")]
+    Unauthorized,
     /// The requested state conflicts with an existing catalog resource.
     #[error("{0}")]
     Conflict(&'static str),
@@ -88,6 +92,7 @@ struct ErrorBody {
     /// Stable lowercase identifier for client-side error handling.
     #[schema(examples(
         "bad_request",
+        "unauthorized",
         "payload_too_large",
         "unsupported_media_type",
         "validation_error",
@@ -106,6 +111,7 @@ impl IntoResponse for ApiError {
     /// Render the JSON envelope and log unexpected failures once at ERROR.
     fn into_response(self) -> Response {
         let (status, code) = match &self {
+            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::Validation(_) => {
@@ -135,7 +141,14 @@ impl IntoResponse for ApiError {
                 message: self.to_string(),
             },
         };
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if status == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                axum::http::header::WWW_AUTHENTICATE,
+                axum::http::HeaderValue::from_static("Bearer"),
+            );
+        }
+        response
     }
 }
 

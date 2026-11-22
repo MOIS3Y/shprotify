@@ -23,6 +23,7 @@ All API operations are served under `/api/v1`.
 
 Errors use a JSON envelope with `error.code` and `error.message`:
 - 400: `bad_request` — Malformed request or invalid parameters.
+- 401: `unauthorized` — Missing or invalid personal key; Bearer challenge.
 - 413: `payload_too_large` — Request body exceeds the size limit.
 - 415: `unsupported_media_type` — JSON content type is required.
 - 422: `validation_error` — Invalid JSON fields or domain input.
@@ -35,6 +36,7 @@ Internal failure details are logged on the server and never returned.
 HEAD responses have no body, including error responses."
     ),
     tags(
+        (name = "personal", description = "Account, reactions and favorites"),
         (name = "system", description = "Process health"),
         (name = "search", description = "Shared catalog search"),
         (name = "artists", description = "Shared artist catalog"),
@@ -44,9 +46,26 @@ HEAD responses have no body, including error responses."
         (name = "audio_files", description = "File metadata and source tags"),
         (name = "library_scans", description = "Background library indexing")
     ),
-    components(schemas(ErrorResponse), responses(ErrorResponse))
+    components(schemas(ErrorResponse), responses(ErrorResponse)),
+    modifiers(&PersonalSecurity)
 )]
 pub(super) struct ApiDoc;
+
+/// Shared security scheme for Swagger's Authorize control on personal routes.
+struct PersonalSecurity;
+
+impl utoipa::Modify for PersonalSecurity {
+    /// Register bearer credentials without imposing security on public routes.
+    fn modify(&self, api: &mut openapi::OpenApi) {
+        use openapi::security::{Http, HttpAuthScheme, SecurityScheme};
+        if let Some(components) = &mut api.components {
+            components.add_security_scheme(
+                "personal_key",
+                SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+            );
+        }
+    }
+}
 
 /// Add Swagger UI and OpenAPI JSON only when enabled at startup.
 pub(super) fn attach(
@@ -183,7 +202,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 17);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 20);
         assert!(schema["paths"].get("/health").is_none());
     }
 

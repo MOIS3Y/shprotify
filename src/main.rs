@@ -2,6 +2,7 @@
 
 mod api;
 mod app;
+mod auth;
 mod cli;
 mod config;
 mod db;
