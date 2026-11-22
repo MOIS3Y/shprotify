@@ -64,3 +64,22 @@ acoustid_key = ""
 # Optional Chromaprint executable; install fpcalc separately to identify audio.
 # Example: "/run/current-system/sw/bin/fpcalc". Empty disables execution.
 fpcalc_path = ""
+
+[discovery]
+# Local recommendations, profiles and feedback work without external services.
+# Enabling adapters allows explicit personal refresh jobs to contact providers.
+enabled = false
+# Application identity and operator contact; required when enabled.
+# Example: "shprotify/0.1.0 (mailto:operator@example.org)"
+user_agent = ""
+# Last.fm application API key, not a user's password/session/scrobbling key.
+# Environment: SHPROTIFY_DISCOVERY__LASTFM_API_KEY=...
+lastfm_api_key = ""
+# Public playlist search/import only; no ListenBrainz user token is required.
+listenbrainz_enabled = false
+# Recent-release metadata for exact artist MBIDs; separate from metadata jobs.
+musicbrainz_enabled = false
+# Public normalized response cache: 60..86400 seconds. Keys are never cached.
+cache_ttl_seconds = 3600
+# Per-account accepted-refresh interval: 1..3600 seconds; global worker limit 1.
+refresh_interval_seconds = 60

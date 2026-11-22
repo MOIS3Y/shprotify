@@ -272,7 +272,7 @@ mod tests {
         let status = response.status();
         let headers = response.headers().clone();
         assert_eq!(headers[header::CONTENT_TYPE], "application/json");
-        let body = to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         (status, headers, serde_json::from_slice(&body).unwrap())
     }
 

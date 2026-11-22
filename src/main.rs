@@ -7,6 +7,7 @@ mod auth;
 mod cli;
 mod config;
 mod db;
+mod discovery;
 mod jobs;
 mod library;
 mod logging;

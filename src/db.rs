@@ -6,6 +6,7 @@
 
 pub(crate) mod artists;
 pub(crate) mod audio_files;
+pub(crate) mod discovery;
 pub(crate) mod duplicates;
 pub(crate) mod history;
 pub(crate) mod indexing;
@@ -21,6 +22,7 @@ pub(crate) mod releases;
 pub(crate) mod scans;
 pub(crate) mod search;
 pub(crate) mod sessions;
+pub(crate) mod taste;
 pub(crate) mod users;
 
 use std::{path::Path, time::Duration};
@@ -86,6 +88,74 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// Discovery preserves metadata versions, favorites and playback queues.
+    #[tokio::test]
+    async fn upgrades_metadata_to_empty_personal_discovery_without_changes() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let old = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version <= 19)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &old).await.unwrap();
+        users::create(&pool, "legacy", &crate::auth::digest("legacy"))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Original')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let kind = crate::library::enrichment::EntityKind::Recording;
+        metadata::correct(
+            &pool,
+            kind,
+            1,
+            crate::library::enrichment::Correction {
+                version: 1,
+                name: "Curated".into(),
+                artist_ids: vec![],
+                release_kind: None,
+                mbid: None,
+            },
+            1,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO recording_reactions \
+            (user_id,recording_id,reaction,changed_at) \
+            VALUES (1,1,'like',CURRENT_TIMESTAMP)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        queue::update(&pool, 1, 0, Some(&[1, 1]), Some(2), 123)
+            .await
+            .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let metadata = metadata::get(&pool, kind, 1).await.unwrap();
+        assert_eq!(metadata.name, "Curated");
+        assert_eq!(metadata.version, 2);
+        assert_eq!(
+            reactions::favorites(&pool, 1, 50, 0).await.unwrap().len(),
+            1
+        );
+        assert_eq!(
+            queue::get(&pool, 1).await.unwrap().current_position,
+            Some(2)
+        );
+        assert!(discovery::feeds(&pool, 1, 50, 0).await.unwrap().is_empty());
+        assert_eq!(
+            taste::profile(&pool, 1).await.unwrap().preferences.version,
+            0
+        );
+        pool.close().await;
+    }
 
     /// Metadata migration preserves scanner identity and personal queue state.
     #[tokio::test]
@@ -612,7 +682,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=19).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=20).collect::<Vec<_>>());
         pool.close().await;
     }
 

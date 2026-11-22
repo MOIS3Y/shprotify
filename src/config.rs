@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Recommendation adapters, response caching and refresh admission.
+    pub(crate) discovery: DiscoveryConfig,
     /// Optional external metadata services and acoustic identification.
     pub(crate) metadata: MetadataConfig,
     /// Password session settings, applied when issuing new credentials.
@@ -35,6 +37,41 @@ pub(crate) struct Config {
     pub(crate) logging: LoggingConfig,
     /// Optional interactive API documentation and OpenAPI schema.
     pub(crate) docs: DocsConfig,
+}
+
+/// Optional discovery providers; local recommendations need no external key.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DiscoveryConfig {
+    /// Enable explicit external recommendation requests.
+    pub(crate) enabled: bool,
+    /// Meaningful application identity and operator contact.
+    pub(crate) user_agent: String,
+    /// Last.fm application key; blank leaves its adapter disabled.
+    pub(crate) lastfm_api_key: String,
+    /// Enable fetching public ListenBrainz playlists by ID.
+    pub(crate) listenbrainz_enabled: bool,
+    /// Enable recent-release metadata queries for exact artist MBID seeds.
+    pub(crate) musicbrainz_enabled: bool,
+    /// Normalized public response lifetime, 60–86400 seconds.
+    pub(crate) cache_ttl_seconds: u32,
+    /// Minimum interval between accepted refreshes for one account, 1–3600.
+    pub(crate) refresh_interval_seconds: u32,
+}
+
+impl Default for DiscoveryConfig {
+    /// Local-only discovery; no network requests occur automatically.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            user_agent: String::new(),
+            lastfm_api_key: String::new(),
+            listenbrainz_enabled: false,
+            musicbrainz_enabled: false,
+            cache_ttl_seconds: 3600,
+            refresh_interval_seconds: 60,
+        }
+    }
 }
 
 /// Opt-in external lookups; no network requests occur during normal scans.
@@ -241,6 +278,33 @@ impl Config {
                 && !config.metadata.acoustid_key.chars().any(char::is_control),
             "Invalid metadata.acoustid_key"
         );
+        ensure!(
+            !config.discovery.enabled
+                || (config.discovery.user_agent.len() >= 10
+                    && config.discovery.user_agent.len() <= 255
+                    && config.discovery.user_agent.is_ascii()
+                    && !config
+                        .discovery
+                        .user_agent
+                        .chars()
+                        .any(char::is_control)),
+            "discovery.user_agent must identify the app and operator contact"
+        );
+        ensure!(
+            config.discovery.lastfm_api_key.len() <= 255
+                && !config
+                    .discovery
+                    .lastfm_api_key
+                    .chars()
+                    .any(char::is_control),
+            "Invalid discovery.lastfm_api_key"
+        );
+        ensure!(
+            (60..=86400).contains(&config.discovery.cache_ttl_seconds)
+                && (1..=3600)
+                    .contains(&config.discovery.refresh_interval_seconds),
+            "Invalid discovery cache TTL or refresh interval"
+        );
         Ok(config)
     }
 }
@@ -267,6 +331,9 @@ mod tests {
         assert!(matches!(config.logging.format, LogFormat::Pretty));
         assert!(!config.docs.enabled);
         assert!(config.library.directories.is_empty());
+        assert!(!config.discovery.enabled);
+        assert_eq!(config.discovery.cache_ttl_seconds, 3600);
+        assert_eq!(config.discovery.refresh_interval_seconds, 60);
         assert!(!config.metadata.enabled);
         assert!(config.metadata.acoustid_key.is_empty());
     }
@@ -294,6 +361,11 @@ mod tests {
     #[test]
     fn rejects_invalid_values_and_unknown_fields() {
         for contents in [
+            "[discovery]\nenabled = true",
+            "[discovery]\ncache_ttl_seconds = 0",
+            "[discovery]\ncache_ttl_seconds = 86401",
+            "[discovery]\nrefresh_interval_seconds = 0",
+            "[discovery]\nunknown = true",
             "[metadata]\nenabled = true",
             "[metadata]\nenabled = true\nuser_agent = 'bad'",
             "[metadata]\nunknown = true",

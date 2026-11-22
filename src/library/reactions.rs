@@ -4,7 +4,17 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// Explicit preference; absence of a database row means no assessment.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, sqlx::Type, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Deserialize,
+    Serialize,
+    sqlx::Type,
+    ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(rename_all = "snake_case")]
 pub(crate) enum Reaction {

@@ -112,7 +112,7 @@ mod tests {
             .await
             .unwrap();
         let status = response.status().as_u16();
-        let bytes = to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+        let bytes = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         (status, serde_json::from_slice(&bytes).unwrap())
     }
 

@@ -80,8 +80,26 @@ pub(crate) async fn run() -> Result<()> {
                 .context("Failed to initialize metadata adapters");
         }
     };
-    let result =
-        serve_http(&config, &database, &scans, &metadata, shutdown).await;
+    if let Err(error) = db::discovery::recover(&database).await {
+        database.close().await;
+        return Err(error).context("Failed to recover discovery jobs");
+    }
+    let discovery = match crate::jobs::discovery::DiscoveryService::new(
+        database.clone(),
+        config.discovery.clone(),
+    ) {
+        Ok(service) => service,
+        Err(error) => {
+            database.close().await;
+            return Err(error)
+                .context("Failed to initialize discovery adapters");
+        }
+    };
+    let result = serve_http(
+        &config, &database, &scans, &metadata, &discovery, shutdown,
+    )
+    .await;
+    discovery.close().await;
     metadata.close().await;
     scans.close().await;
     database.close().await;
@@ -119,6 +137,7 @@ async fn serve_http(
     database: &sqlx::SqlitePool,
     scans: &ScanService,
     metadata: &crate::jobs::metadata::MetadataService,
+    discovery: &crate::jobs::discovery::DiscoveryService,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
     let address = config.http.bind;
@@ -132,12 +151,13 @@ async fn serve_http(
 
     axum::serve(
         listener,
-        api::router_with_metadata(
+        api::router_with_services(
             &config.auth,
             &config.docs,
             database,
             scans.clone(),
             metadata.clone(),
+            discovery.clone(),
         ),
     )
     .with_graceful_shutdown(shutdown)

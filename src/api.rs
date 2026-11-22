@@ -2,6 +2,7 @@
 
 mod artists;
 mod audio_files;
+mod discovery;
 mod docs;
 mod duplicates;
 pub(crate) mod error;
@@ -50,19 +51,26 @@ pub(crate) fn router(
         crate::config::MetadataConfig::default(),
     )
     .expect("Disabled metadata adapters require no configuration");
-    router_with_metadata(auth, config, pool, scans, metadata)
+    let discovery = crate::jobs::discovery::DiscoveryService::new(
+        pool.clone(),
+        crate::config::DiscoveryConfig::default(),
+    )
+    .expect("Disabled discovery adapters need no configuration");
+    router_with_services(auth, config, pool, scans, metadata, discovery)
 }
 
 /// Production routing with an application-owned metadata worker lifecycle.
-pub(crate) fn router_with_metadata(
+pub(crate) fn router_with_services(
     auth: &crate::config::AuthConfig,
     config: &DocsConfig,
     pool: &sqlx::SqlitePool,
     scans: ScanService,
     metadata_service: crate::jobs::metadata::MetadataService,
+    discovery_service: crate::jobs::discovery::DiscoveryService,
 ) -> Router {
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
+        .merge(discovery::router(pool.clone(), discovery_service))
         .merge(metadata::router(pool.clone(), metadata_service))
         .merge(streaming::router(pool.clone(), scans.roots()))
         .merge(sessions::router(pool.clone(), *auth))

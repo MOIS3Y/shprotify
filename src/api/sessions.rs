@@ -173,7 +173,7 @@ mod tests {
     /// Decode a bounded response; tokens stay in test memory only.
     async fn json_body(response: Response) -> Value {
         serde_json::from_slice(
-            &to_bytes(response.into_body(), 128 * 1024).await.unwrap(),
+            &to_bytes(response.into_body(), 256 * 1024).await.unwrap(),
         )
         .unwrap()
     }

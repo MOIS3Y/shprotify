@@ -1,11 +1,15 @@
 //! Read-only external metadata adapters; no automatic catalog writes.
 
 pub(crate) mod acoustid;
+pub(crate) mod discovery;
 pub(crate) mod musicbrainz;
 
 use anyhow::{Result, ensure};
 use reqwest::{Client, Response, Url};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 use tokio::{sync::Mutex, time::Instant};
 
 /// Shared HTTP transport with bounded bodies, deadlines and global pacing.
@@ -38,7 +42,7 @@ impl Transport {
             .build()?;
         Ok(Self {
             client,
-            next: Arc::new(Mutex::new(Instant::now())),
+            next: provider_clock(),
         })
     }
 
@@ -71,6 +75,14 @@ impl Transport {
     }
 }
 
+/// All production clients share pacing, including metadata and discovery.
+fn provider_clock() -> Arc<Mutex<Instant>> {
+    static CLOCK: OnceLock<Arc<Mutex<Instant>>> = OnceLock::new();
+    CLOCK
+        .get_or_init(|| Arc::new(Mutex::new(Instant::now())))
+        .clone()
+}
+
 /// Redirects cannot reach arbitrary hosts, local addresses or plaintext URLs.
 fn allowed(url: &Url) -> bool {
     url.scheme() == "https"
@@ -83,6 +95,8 @@ fn allowed(url: &Url) -> bool {
                 "coverartarchive.org",
                 "api.acoustid.org",
                 "archive.org",
+                "ws.audioscrobbler.com",
+                "api.listenbrainz.org",
             ]
             .contains(&host)
                 || host.ends_with(".archive.org")
