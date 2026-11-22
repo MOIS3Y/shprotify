@@ -14,6 +14,7 @@ pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
 pub(crate) mod scans;
+pub(crate) mod search;
 
 use std::{path::Path, time::Duration};
 
@@ -79,6 +80,84 @@ mod tests {
 
     use super::*;
 
+    /// Existing entities become searchable when FTS is introduced.
+    #[tokio::test]
+    async fn upgrades_catalog_and_indexes_existing_entities() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("catalog.db");
+        let previous = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 10)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &previous).await.unwrap();
+        sqlx::query("INSERT INTO artists (name) VALUES ('Legacy')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO recordings (title) VALUES ('Legacy')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO releases (title, kind) \
+            VALUES ('Legacy', 'other')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let query = crate::library::search::phrase("leg").unwrap();
+        assert_eq!(
+            search::find(&pool, &query, None, 50, 0)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+        sqlx::query("UPDATE recordings SET title = 'Changed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE releases SET title = 'Changed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            search::find(&pool, &query, None, 50, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        let changed = crate::library::search::phrase("changed").unwrap();
+        assert_eq!(
+            search::find(&pool, &changed, None, 50, 0)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        sqlx::query("DELETE FROM recordings")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM releases")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            search::find(&pool, &changed, None, 50, 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        pool.close().await;
+    }
+
     /// Resolve one test migration without adding test tables to the binary.
     async fn migrator(directory: &Path, sql: &str) -> Migrator {
         fs::write(directory.join("1_test.sql"), sql).unwrap();
@@ -139,7 +218,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         pool.close().await;
     }
 

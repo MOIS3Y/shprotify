@@ -10,6 +10,7 @@ mod recordings;
 mod release_tracks;
 mod releases;
 mod scans;
+mod search;
 
 use axum::{Json, Router};
 use serde::Serialize;
@@ -39,6 +40,7 @@ pub(crate) fn router(
         .merge(release_tracks::router(pool.clone()))
         .merge(audio_files::router(pool.clone()))
         .merge(duplicates::router(pool.clone()))
+        .merge(search::router(pool.clone()))
         .merge(scans::router(pool.clone(), scans));
     let (router, schema) =
         OpenApiRouter::with_openapi(docs::ApiDoc::openapi())

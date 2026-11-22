@@ -9,6 +9,7 @@ pub(crate) mod recordings;
 pub(crate) mod release_tracks;
 pub(crate) mod releases;
 pub(crate) mod scan;
+pub(crate) mod search;
 
 use std::collections::HashSet;
 
