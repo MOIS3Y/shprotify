@@ -2,6 +2,7 @@
 
 mod artists;
 mod audio_files;
+mod automation;
 mod discovery;
 mod docs;
 mod downloads;
@@ -63,26 +64,60 @@ pub(crate) fn router(
         None,
     );
     router_with_services(
-        auth, config, pool, scans, metadata, discovery, downloads,
+        auth,
+        config,
+        pool,
+        Services {
+            scans,
+            metadata,
+            discovery,
+            downloads,
+            automation: crate::config::AutomationConfig::default(),
+        },
     )
 }
 
-/// Production routing with an application-owned metadata worker lifecycle.
+/// Application-owned services and immutable scheduling policy for HTTP routes.
+pub(crate) struct Services {
+    /// Supervised collection scanner and configured external roots.
+    pub(crate) scans: ScanService,
+    /// Existing proposal executor; routes never spawn another lifecycle.
+    pub(crate) metadata: crate::jobs::metadata::MetadataService,
+    /// Existing private recommendation executor.
+    pub(crate) discovery: crate::jobs::discovery::DiscoveryService,
+    /// Acquisition executor and read-only import policy.
+    pub(crate) downloads: crate::jobs::downloads::DownloadService,
+    /// Interval admission defaults and administrator limits.
+    pub(crate) automation: crate::config::AutomationConfig,
+}
+
+/// Build routes using lifecycles supervised and drained by application
+/// startup.
 pub(crate) fn router_with_services(
     auth: &crate::config::AuthConfig,
     config: &DocsConfig,
     pool: &sqlx::SqlitePool,
-    scans: ScanService,
-    metadata_service: crate::jobs::metadata::MetadataService,
-    discovery_service: crate::jobs::discovery::DiscoveryService,
-    downloads_service: crate::jobs::downloads::DownloadService,
+    services: Services,
 ) -> Router {
+    let Services {
+        scans,
+        metadata: metadata_service,
+        discovery: discovery_service,
+        downloads: downloads_service,
+        automation: automation_config,
+    } = services;
+    let import_policy = downloads_service.import_policy().clone();
     let mut media_roots = scans.roots().as_ref().clone();
     if let Some(root) = downloads_service.media_root() {
         media_roots.push(root);
     }
     let v1 = OpenApiRouter::new()
         .routes(routes!(health))
+        .merge(automation::router(
+            pool.clone(),
+            automation_config,
+            import_policy,
+        ))
         .merge(downloads::router(pool.clone(), downloads_service))
         .merge(discovery::router(pool.clone(), discovery_service))
         .merge(metadata::router(pool.clone(), metadata_service))

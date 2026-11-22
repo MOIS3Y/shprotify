@@ -4,6 +4,9 @@
 //! Separate nested keys with `__`, for example `SHPROTIFY_HTTP__BIND`.
 //! Relative database paths are resolved against the working directory.
 
+pub(crate) mod automation;
+pub(crate) use automation::AutomationConfig;
+
 use std::{
     fs,
     net::SocketAddr,
@@ -21,6 +24,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
+    /// Opt-in recurring work and interval policy.
+    pub(crate) automation: AutomationConfig,
     /// Experimental audio acquisition and managed storage.
     pub(crate) downloads: DownloadsConfig,
     /// Recommendation adapters, response caching and refresh admission.
@@ -65,6 +70,8 @@ pub(crate) struct DownloadsConfig {
     pub(crate) request_interval_seconds: u32,
     /// Experimental YouTube adapter and executable paths.
     pub(crate) youtube: YoutubeConfig,
+    /// Finite catalog admission rules, independent of provider selection.
+    pub(crate) import: crate::downloads::policy::ImportPolicy,
 }
 
 impl Default for DownloadsConfig {
@@ -81,6 +88,7 @@ impl Default for DownloadsConfig {
             max_duration_seconds: 1800,
             request_interval_seconds: 5,
             youtube: YoutubeConfig::default(),
+            import: crate::downloads::policy::ImportPolicy::default(),
         }
     }
 }
@@ -408,6 +416,7 @@ impl Config {
                     .contains(&config.discovery.refresh_interval_seconds),
             "Invalid discovery cache TTL or refresh interval"
         );
+        config.automation.validate()?;
         config.downloads.validate()?;
         Ok(config)
     }
@@ -461,6 +470,41 @@ mod tests {
                 from_toml(&format!("[downloads]\n{input}")).is_err(),
                 "accepted {input}"
             );
+        }
+    }
+
+    /// Automatic execution is inert by default; finite policy is strict TOML.
+    #[test]
+    fn validates_interval_automation_and_import_policy() {
+        let defaults = from_toml("").unwrap();
+        assert!(!defaults.automation.enabled);
+        assert!(!defaults.automation.metadata.enabled);
+        assert_eq!(defaults.automation.library.scan_interval_seconds, 0);
+        assert!(defaults.downloads.import.create_recordings);
+        let configured = from_toml(
+            "[automation]\nenabled=true\n\
+             [automation.library]\nscan_interval_seconds=3600\n\
+             [downloads.import]\nduplicates='reject'\ncreate_recordings=false",
+        )
+        .unwrap();
+        assert!(configured.automation.enabled);
+        assert!(!configured.downloads.import.create_recordings);
+        assert!(configured.downloads.import.allow_alternate_files);
+        for input in [
+            "[automation]\ncron='* * * * *'",
+            "[automation.library]\nscan_interval_seconds=1",
+            "[automation.library]\nscan_interval_seconds=2592001",
+            "[automation.discovery]\nmin_interval_seconds=0",
+            "[automation.discovery]\ndefault_interval_seconds=60",
+            "[automation.discovery]\nmax_schedules_per_user=101",
+            "[automation.metadata]\ninterval_seconds=3599",
+            "[automation.metadata]\nmax_schedules=0",
+            "[automation.metadata]\nauto_apply=true",
+            "[downloads.import]\nduplicates='merge'",
+            "[downloads.import]\ncreate_recordings='yes'",
+            "[downloads.import]\ncommand='shell'",
+        ] {
+            assert!(from_toml(input).is_err(), "accepted {input}");
         }
     }
 

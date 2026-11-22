@@ -41,6 +41,7 @@ HEAD responses have no body, including error responses."
     tags(
         (name = "playlists", description = "Owned and published playlists"),
         (name = "downloads", description = "Experimental member acquisition"),
+        (name = "automation", description = "Opt-in interval schedules"),
         (name = "discovery", description = "Personal music discovery"),
         (name = "metadata", description = "Catalog correction and enrichment"),
         (name = "queue", description = "Personal playback queue"),
@@ -214,7 +215,7 @@ mod tests {
             content["properties"]["error"]["$ref"],
             "#/components/schemas/ErrorBody"
         );
-        assert_eq!(schema["paths"].as_object().unwrap().len(), 70);
+        assert_eq!(schema["paths"].as_object().unwrap().len(), 74);
         assert!(schema["paths"].get("/health").is_none());
     }
 

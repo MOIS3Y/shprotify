@@ -5,6 +5,7 @@
 //! and completed imports survive a later failure. Graceful shutdown waits for
 //! accepted work before closing SQLite. Startup explicitly recovers old jobs.
 
+pub(crate) mod automation;
 pub(crate) mod discovery;
 pub(crate) mod downloads;
 pub(crate) mod metadata;
@@ -23,6 +24,46 @@ use crate::{
     db,
     library::{file_state::FileState, scan},
 };
+
+/// Manual requests defer new automatic admissions for thirty seconds.
+/// Already admitted work is never preempted; each service shares this clock.
+pub(crate) struct ManualPriority {
+    /// Monotonic process-local baseline; wall-clock changes cannot shorten it.
+    started: std::time::Instant,
+    /// Most recent manual attempt in milliseconds, or MAX before the first.
+    last: std::sync::atomic::AtomicU64,
+}
+
+impl Default for ManualPriority {
+    /// Fresh processes have no pending manual request to prioritize.
+    fn default() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            last: std::sync::atomic::AtomicU64::new(u64::MAX),
+        }
+    }
+}
+
+impl ManualPriority {
+    /// Record intent before waiting on the service admission mutex.
+    pub(crate) fn manual(&self) {
+        self.last
+            .store(self.millis(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Automatic work yields even when a recent manual request found a busy
+    /// slot.
+    pub(crate) fn automatic_allowed(&self) -> bool {
+        let last = self.last.load(std::sync::atomic::Ordering::Relaxed);
+        last == u64::MAX || self.millis().saturating_sub(last) >= 30_000
+    }
+
+    /// Saturate process age rather than narrowing a wide millisecond count.
+    fn millis(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis())
+            .unwrap_or(u64::MAX - 1)
+    }
+}
 
 /// Durable scan lifecycle; completed jobs may have isolated file errors.
 #[derive(Debug, Serialize, sqlx::Type, ToSchema, PartialEq, Eq)]
@@ -103,6 +144,8 @@ pub(crate) struct ScanService {
     roots: Arc<Vec<PathBuf>>,
     /// Serializes admission with shutdown and owns every worker supervisor.
     state: Arc<Mutex<Workers>>,
+    /// Manual admission wins over future scheduled scans.
+    priority: Arc<ManualPriority>,
 }
 
 /// Mutable task lifecycle protected by the service admission mutex.
@@ -126,6 +169,7 @@ impl ScanService {
             pool,
             roots: Arc::new(roots),
             state: Arc::new(Mutex::new(Workers::default())),
+            priority: Arc::new(ManualPriority::default()),
         }
     }
 
@@ -134,7 +178,26 @@ impl ScanService {
         &self,
         force: bool,
     ) -> Result<ScanJob, StartError> {
+        self.priority.manual();
+        self.start_inner(force, false).await
+    }
+
+    /// Use the same admission without bypassing manual priority or scan
+    /// limits.
+    pub(crate) async fn start_automatic(&self) -> Result<ScanJob, StartError> {
+        self.start_inner(false, true).await
+    }
+
+    /// Serialize all scan admissions; scheduled scans never force a reprobe.
+    async fn start_inner(
+        &self,
+        force: bool,
+        automatic: bool,
+    ) -> Result<ScanJob, StartError> {
         let mut state = self.state.lock().await;
+        if automatic && !self.priority.automatic_allowed() {
+            return Err(StartError::Busy);
+        }
         if state.stopping {
             return Err(StartError::Stopping);
         }

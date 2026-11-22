@@ -3,6 +3,7 @@
 //! A selected source is a user assertion, not an acoustic identity proof.
 //! Only the server validates and publishes files into managed storage.
 
+pub(crate) mod policy;
 pub(crate) mod storage;
 
 use crate::discovery::CandidateData;

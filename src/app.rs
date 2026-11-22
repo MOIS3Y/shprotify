@@ -117,11 +117,38 @@ pub(crate) async fn run() -> Result<()> {
         database.close().await;
         return Err(error).context("Failed to recover acquisition jobs");
     }
+    let automation = crate::jobs::automation::AutomationService::new(
+        database.clone(),
+        config.automation.clone(),
+        scans.clone(),
+        discovery.clone(),
+        metadata.clone(),
+    )
+    .start()
+    .await;
+    let automation = match automation {
+        Ok(worker) => worker,
+        Err(error) => {
+            downloads.close().await;
+            discovery.close().await;
+            metadata.close().await;
+            scans.close().await;
+            database.close().await;
+            return Err(error)
+                .context("Failed to initialize automation schedules");
+        }
+    };
+    let stop_automation = automation.stop_signal();
+    let shutdown = async move {
+        shutdown.await;
+        stop_automation.send_replace(true);
+    };
     let result = serve_http(
         &config, &database, &scans, &metadata, &discovery, &downloads,
         shutdown,
     )
     .await;
+    automation.close().await;
     downloads.close().await;
     discovery.close().await;
     metadata.close().await;
@@ -180,10 +207,13 @@ async fn serve_http(
             &config.auth,
             &config.docs,
             database,
-            scans.clone(),
-            metadata.clone(),
-            discovery.clone(),
-            downloads.clone(),
+            api::Services {
+                scans: scans.clone(),
+                metadata: metadata.clone(),
+                discovery: discovery.clone(),
+                downloads: downloads.clone(),
+                automation: config.automation.clone(),
+            },
         ),
     )
     .with_graceful_shutdown(shutdown)

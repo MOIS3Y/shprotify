@@ -786,14 +786,17 @@ mod tests {
                 &crate::config::AuthConfig::default(),
                 &crate::config::DocsConfig { enabled: true },
                 &pool,
-                scans,
-                metadata,
-                service.clone(),
-                crate::jobs::downloads::DownloadService::new(
-                    pool.clone(),
-                    crate::config::DownloadsConfig::default(),
-                    None,
-                ),
+                crate::api::Services {
+                    scans,
+                    metadata,
+                    discovery: service.clone(),
+                    downloads: crate::jobs::downloads::DownloadService::new(
+                        pool.clone(),
+                        crate::config::DownloadsConfig::default(),
+                        None,
+                    ),
+                    automation: crate::config::AutomationConfig::default(),
+                },
             );
             Self {
                 _dir: dir,
@@ -1084,7 +1087,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(count, 14);
+        assert_eq!(count, 16);
         f.service.close().await;
         f.pool.close().await;
     }

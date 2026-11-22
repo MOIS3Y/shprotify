@@ -388,10 +388,13 @@ mod tests {
             &crate::config::AuthConfig::default(),
             &crate::config::DocsConfig { enabled: true },
             &f.pool,
-            scans,
-            metadata,
-            discovery,
-            f.service.clone(),
+            crate::api::Services {
+                scans,
+                metadata,
+                discovery,
+                downloads: f.service.clone(),
+                automation: crate::config::AutomationConfig::default(),
+            },
         );
         (app, alice, bob)
     }

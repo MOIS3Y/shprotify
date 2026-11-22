@@ -82,6 +82,13 @@ impl DownloadService {
             && self.0.storage.is_some()
     }
 
+    /// Read-only policy projection for administrator configuration inspection.
+    pub(crate) fn import_policy(
+        &self,
+    ) -> &crate::downloads::policy::ImportPolicy {
+        &self.0.config.import
+    }
+
     /// Include previously managed audio in streaming even when fetching is
     /// off.
     pub(crate) fn media_root(&self) -> Option<PathBuf> {
@@ -214,7 +221,13 @@ impl DownloadService {
         }
         let work = db::downloads::work(&self.0.pool, id).await?;
         let source = self.probe(object).await?;
-        db::download_import::commit(&self.0.pool, &work, source).await?;
+        db::download_import::commit(
+            &self.0.pool,
+            &work,
+            source,
+            &self.0.config.import,
+        )
+        .await?;
         storage.cleanup(id).map_err(|_| {
             DownloadError::Failed("Cannot clean recovered download")
         })?;
@@ -450,6 +463,14 @@ impl DownloadService {
         {
             return Ok(());
         }
+        if work.job.operation == "download" {
+            db::download_import::check_policy(
+                &self.0.pool,
+                &work.target,
+                &self.0.config.import,
+            )
+            .await?;
+        }
         let stage = if work.job.operation == "download" {
             Some(self.storage()?.stage(id).map_err(|_| {
                 DownloadError::Failed("Cannot prepare download scratch space")
@@ -590,6 +611,12 @@ impl DownloadService {
             .await?;
             return Ok(());
         }
+        db::download_import::check_policy(
+            &self.0.pool,
+            &work.target,
+            &self.0.config.import,
+        )
+        .await?;
         let storage = self.storage()?;
         let object = storage.object(hash, &source.format);
         let name = object
@@ -607,7 +634,13 @@ impl DownloadService {
             DownloadError::Failed("Cannot publish downloaded audio")
         })?;
         let final_source = self.probe(object).await?;
-        db::download_import::commit(&self.0.pool, work, final_source).await
+        db::download_import::commit(
+            &self.0.pool,
+            work,
+            final_source,
+            &self.0.config.import,
+        )
+        .await
     }
 
     /// Reuse a readable exact source/hash without trusting stale registry
@@ -627,6 +660,13 @@ impl DownloadService {
         else {
             return Ok(false);
         };
+        if self.0.config.import.duplicates
+            == crate::downloads::policy::DuplicatePolicy::Reject
+        {
+            return Err(DownloadError::Conflict(
+                "Import policy rejects duplicates",
+            ));
+        }
         let existing = db::audio_files::find(&self.0.pool, recording, file)
             .await?
             .ok_or(DownloadError::NotFound)?;
@@ -643,8 +683,14 @@ impl DownloadService {
                 "Registered duplicate is unavailable or changed",
             ));
         }
-        db::download_import::reuse(&self.0.pool, work, recording, file)
-            .await?;
+        db::download_import::reuse(
+            &self.0.pool,
+            work,
+            recording,
+            file,
+            &self.0.config.import,
+        )
+        .await?;
         Ok(true)
     }
 

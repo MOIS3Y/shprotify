@@ -5,7 +5,10 @@
 
 use super::downloads::Work;
 use crate::{
-    downloads::{DownloadError, Result, Target},
+    downloads::{
+        DownloadError, Result, Target,
+        policy::{DuplicatePolicy, ImportPolicy},
+    },
     library::metadata::ScannedFile,
 };
 use sqlx::{SqliteConnection, SqlitePool};
@@ -59,6 +62,50 @@ pub(crate) async fn existing(
     .await?)
 }
 
+/// Reject disallowed catalog mutations before contacting a
+/// provider/publishing.
+/// The import transaction repeats these checks to close concurrent-write
+/// races.
+pub(crate) async fn check_policy(
+    pool: &SqlitePool,
+    target: &Target,
+    policy: &ImportPolicy,
+) -> Result<()> {
+    let recording = if let Some(id) = target.recording_id {
+        Some(id)
+    } else if let Some(candidate) = target.candidate_id {
+        sqlx::query_scalar(
+            "SELECT recording_id FROM discovery_download_links \
+            WHERE candidate_id=?",
+        )
+        .bind(candidate)
+        .fetch_optional(pool)
+        .await?
+    } else {
+        None
+    };
+    if recording.is_none() && !policy.create_recordings {
+        return Err(DownloadError::Conflict(
+            "Import policy requires an explicitly selected existing recording",
+        ));
+    }
+    if !policy.allow_alternate_files && recording.is_some() {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM audio_files \
+                    WHERE recording_id=?)",
+        )
+        .bind(recording)
+        .fetch_one(pool)
+        .await?;
+        if exists {
+            return Err(DownloadError::Conflict(
+                "Import policy rejects alternative files for this track",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Reject a source already associated with a different explicit catalog
 /// target.
 fn compatible(target: &Target, recording: i64) -> Result<()> {
@@ -77,7 +124,13 @@ pub(crate) async fn reuse(
     work: &Work,
     recording: i64,
     file: i64,
+    policy: &ImportPolicy,
 ) -> Result<()> {
+    if policy.duplicates == DuplicatePolicy::Reject {
+        return Err(DownloadError::Conflict(
+            "Import policy rejects duplicates",
+        ));
+    }
     compatible(&work.target, recording)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let state: (String, bool) = sqlx::query_as(
@@ -100,6 +153,7 @@ pub(crate) async fn commit(
     pool: &SqlitePool,
     work: &Work,
     source: ScannedFile,
+    policy: &ImportPolicy,
 ) -> Result<()> {
     let hash = source.sha256.as_deref().ok_or(DownloadError::Failed(
         "Audio verification did not produce a content hash",
@@ -130,10 +184,29 @@ pub(crate) async fn commit(
     .fetch_optional(&mut *tx)
     .await?;
     let (recording, file) = if let Some(pair) = duplicate {
+        if policy.duplicates == DuplicatePolicy::Reject {
+            return Err(DownloadError::Conflict(
+                "Import policy rejects duplicates",
+            ));
+        }
         compatible(&work.target, pair.0)?;
         pair
     } else {
-        let recording = resolve(&mut tx, &work.target).await?;
+        let recording = resolve(&mut tx, &work.target, policy).await?;
+        if !policy.allow_alternate_files {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM audio_files \
+                    WHERE recording_id=?)",
+            )
+            .bind(recording)
+            .fetch_one(&mut *tx)
+            .await?;
+            if exists {
+                return Err(DownloadError::Conflict(
+                    "Import policy rejects alternative files for this track",
+                ));
+            }
+        }
         let p = &source.properties;
         let file: i64 = sqlx::query_scalar(
             "INSERT INTO audio_files \
@@ -186,7 +259,11 @@ pub(crate) async fn commit(
 }
 
 /// Create only a requested recording; never claim a candidate's external MBID.
-async fn resolve(c: &mut SqliteConnection, target: &Target) -> Result<i64> {
+async fn resolve(
+    c: &mut SqliteConnection,
+    target: &Target,
+    policy: &ImportPolicy,
+) -> Result<i64> {
     if let Some(id) = target.recording_id {
         let exists: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM recordings WHERE id=?)",
@@ -211,6 +288,11 @@ async fn resolve(c: &mut SqliteConnection, target: &Target) -> Result<i64> {
         if let Some(id) = existing {
             return Ok(id);
         }
+    }
+    if !policy.create_recordings {
+        return Err(DownloadError::Conflict(
+            "Import policy requires an explicitly selected existing recording",
+        ));
     }
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO recordings (title) VALUES (?) RETURNING id",
@@ -501,6 +583,130 @@ mod tests {
             "completed"
         );
         service.close().await;
+        f.pool.close().await;
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    //! Operator policy preserves explicit targets and prevents unwanted
+    //! writes.
+    use crate::{
+        db,
+        downloads::{SearchRequest, policy::DuplicatePolicy},
+        jobs::downloads::{DownloadService, tests::Fixture},
+    };
+
+    /// Strict catalog creation requires a selected existing Recording.
+    #[tokio::test]
+    async fn creation_policy_rejects_unknown_tracks_before_provider_work() {
+        let f = Fixture::new().await;
+        let source = f.source().await;
+        f.service.close().await;
+        f.mode("fail");
+        let mut config = f.config.clone();
+        config.import.create_recordings = false;
+        let service = DownloadService::new(
+            f.pool.clone(),
+            config,
+            Some(f.storage.clone()),
+        );
+        let job = service.download(1, source).await.unwrap();
+        let failed = f.wait(1, job.id).await;
+        assert_eq!(failed.status, "failed");
+        assert!(failed.message.unwrap().contains("existing recording"));
+        let (recordings, journals): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM recordings), \
+                (SELECT count(*) FROM download_imports)",
+        )
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        assert_eq!((recordings, journals), (0, 0));
+        let recording = db::recordings::create(
+            &f.pool,
+            crate::library::recordings::NewRecording::new("Curated", vec![])
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        f.mode("ok");
+        f.cool().await;
+        let search = service
+            .search(1, SearchRequest::Recording { id: recording.id })
+            .await
+            .unwrap();
+        f.wait(1, search.id).await;
+        let source =
+            db::downloads::sources(&f.pool, 1, search.id).await.unwrap()[0].id;
+        let job = service.download(1, source).await.unwrap();
+        assert_eq!(f.wait(1, job.id).await.recording_id, Some(recording.id));
+        service.close().await;
+        f.pool.close().await;
+    }
+
+    /// Exact reuse and alternative-file admission are independent finite
+    /// rules.
+    #[tokio::test]
+    async fn duplicate_and_alternative_policies_preserve_existing_catalog() {
+        let f = Fixture::new().await;
+        let source = f.source().await;
+        let job = f.service.download(1, source).await.unwrap();
+        let imported = f.wait(1, job.id).await;
+        let recording = imported.recording_id.unwrap();
+        f.service.close().await;
+        f.mode("fail");
+        let mut config = f.config.clone();
+        config.import.duplicates = DuplicatePolicy::Reject;
+        let reject = DownloadService::new(
+            f.pool.clone(),
+            config,
+            Some(f.storage.clone()),
+        );
+        let job = reject.download(1, source).await.unwrap();
+        let failed = f.wait(1, job.id).await;
+        assert_eq!(failed.status, "failed");
+        assert_eq!(
+            failed.message.as_deref(),
+            Some("Import policy rejects duplicates")
+        );
+        reject.close().await;
+        let mut config = f.config.clone();
+        config.import.allow_alternate_files = false;
+        let strict = DownloadService::new(
+            f.pool.clone(),
+            config,
+            Some(f.storage.clone()),
+        );
+        let job = strict.download(1, source).await.unwrap();
+        assert_eq!(f.wait(1, job.id).await.file_id, imported.file_id);
+        f.cool().await;
+        let search = strict
+            .search(1, SearchRequest::Recording { id: recording })
+            .await
+            .unwrap();
+        f.wait(1, search.id).await;
+        let source: i64 = sqlx::query_scalar(
+            "INSERT INTO download_sources (job_id,video_id,title) \
+            VALUES (?,'01234567890','Another upload') RETURNING id",
+        )
+        .bind(search.id)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        let job = strict.download(1, source).await.unwrap();
+        let failed = f.wait(1, job.id).await;
+        assert_eq!(failed.status, "failed");
+        assert!(failed.message.unwrap().contains("alternative files"));
+        let (recordings, files): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM recordings), \
+                (SELECT count(*) FROM audio_files)",
+        )
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        assert_eq!((recordings, files), (1, 1));
+        strict.close().await;
         f.pool.close().await;
     }
 }

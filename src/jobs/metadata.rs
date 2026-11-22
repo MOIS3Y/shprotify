@@ -92,6 +92,8 @@ pub(crate) struct MetadataService {
     http: Option<Transport>,
     /// Admission/shutdown synchronization and owned supervisor tasks.
     workers: Arc<Mutex<Workers>>,
+    /// Manual correction requests retain priority over scheduled proposals.
+    priority: Arc<super::ManualPriority>,
 }
 
 /// A single admission lock prevents a job from racing with shutdown.
@@ -121,6 +123,7 @@ impl MetadataService {
             config: Arc::new(config),
             http,
             workers: Arc::new(Mutex::new(Workers::default())),
+            priority: Arc::new(super::ManualPriority::default()),
         })
     }
 
@@ -130,7 +133,30 @@ impl MetadataService {
         &self,
         kind: EntityKind,
         target: i64,
+        input: JobRequest,
+    ) -> Result<MetadataJob, StartError> {
+        self.priority.manual();
+        self.start_inner(kind, target, input, false).await
+    }
+
+    /// Scheduled work produces proposals only, with the same source
+    /// validation.
+    pub(crate) async fn start_automatic(
+        &self,
+        kind: EntityKind,
+        target: i64,
+        input: JobRequest,
+    ) -> Result<MetadataJob, StartError> {
+        self.start_inner(kind, target, input, true).await
+    }
+
+    /// Share the complete validation and admission path between both triggers.
+    async fn start_inner(
+        &self,
+        kind: EntityKind,
+        target: i64,
         mut input: JobRequest,
+        automatic: bool,
     ) -> Result<MetadataJob, StartError> {
         let entity = db::metadata::get(&self.pool, kind, target).await?;
         let file_action = matches!(
@@ -207,6 +233,9 @@ impl MetadataService {
             None
         };
         let mut workers = self.workers.lock().await;
+        if automatic && !self.priority.automatic_allowed() {
+            return Err(StartError::Busy);
+        }
         if workers.stopping {
             return Err(StartError::Busy);
         }

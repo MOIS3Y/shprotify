@@ -116,3 +116,41 @@ enabled = false
 yt_dlp_path = "yt-dlp"
 ffmpeg_path = "ffmpeg"
 deno_path = "deno"
+
+[downloads.import]
+# Finite import rules, applied again inside the catalog transaction.
+# "reuse": reuse verified source/content duplicates; "reject": fail the job.
+duplicates = "reuse"
+# False requires an existing recording/provenance; no automatic catalog creation.
+create_recordings = true
+# False rejects another file for an already populated recording.
+# Exact duplicates reused by the policy above do not create another file.
+allow_alternate_files = true
+
+[automation]
+# One in-process dispatcher; all settings apply after a server restart.
+# Manual operations work independently. No cron, shell commands or missed-run replay.
+enabled = false
+
+[automation.library]
+# Incremental scans of external roots: 0 disables; otherwise 60..2592000 seconds.
+# Does not scan or modify managed download storage.
+scan_interval_seconds = 0
+
+[automation.discovery]
+# Each owner explicitly enables existing feeds through their schedule API.
+# Default/minimum intervals: 60..2592000 seconds; default must be >= minimum.
+default_interval_seconds = 21600
+min_interval_seconds = 3600
+# Enabled schedules per account: 1..100. New schedules start after one interval.
+max_schedules_per_user = 20
+
+[automation.metadata]
+# Only administrator-selected entities; no implicit whole-catalog batch.
+# Also requires metadata.enabled. Produces proposals; never auto-applies fields.
+# Pending proposals must be reviewed before another automatic lookup/search.
+enabled = false
+# Default and minimum target interval: 3600..2592000 seconds.
+interval_seconds = 86400
+# Enabled metadata targets across the instance: 1..100.
+max_schedules = 50

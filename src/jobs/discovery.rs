@@ -25,6 +25,8 @@ pub(crate) struct DiscoveryService {
     workers: Arc<Mutex<Workers>>,
     /// Minimum persisted interval between one account's accepted refreshes.
     cooldown: u32,
+    /// Explicit refreshes precede future automatic admissions.
+    priority: Arc<super::ManualPriority>,
 }
 
 /// Serialize admission with shutdown and retain each supervisor task.
@@ -48,6 +50,7 @@ impl DiscoveryService {
             pool,
             workers: Arc::new(Mutex::new(Workers::default())),
             cooldown,
+            priority: Arc::new(super::ManualPriority::default()),
         })
     }
 
@@ -55,13 +58,37 @@ impl DiscoveryService {
     pub(crate) async fn start(
         &self,
         user: i64,
+        request: FeedRequest,
+    ) -> Result<DiscoveryJob, DiscoveryError> {
+        self.priority.manual();
+        self.start_inner(user, request, false).await
+    }
+
+    /// Refresh an owned feed without suppressing pending manual requests.
+    pub(crate) async fn refresh_automatic(
+        &self,
+        user: i64,
+        id: i64,
+    ) -> Result<DiscoveryJob, DiscoveryError> {
+        let feed = db::discovery::feed(&self.pool, user, id).await?;
+        self.start_inner(user, feed.request, true).await
+    }
+
+    /// Both triggers reuse durable ownership, cooldown and bounded admission.
+    async fn start_inner(
+        &self,
+        user: i64,
         mut request: FeedRequest,
+        automatic: bool,
     ) -> Result<DiscoveryJob, DiscoveryError> {
         request.validate().map_err(DiscoveryError::Invalid)?;
         self.providers
             .supports(&request)
             .map_err(DiscoveryError::Invalid)?;
         let mut workers = self.workers.lock().await;
+        if automatic && !self.priority.automatic_allowed() {
+            return Err(DiscoveryError::Conflict);
+        }
         if workers.stopping {
             return Err(DiscoveryError::Conflict);
         }

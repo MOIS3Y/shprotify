@@ -6,6 +6,7 @@
 
 pub(crate) mod artists;
 pub(crate) mod audio_files;
+pub(crate) mod automation;
 pub(crate) mod discovery;
 pub(crate) mod download_import;
 pub(crate) mod downloads;
@@ -90,6 +91,84 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// Adding automation never enables existing feeds or changes pending work.
+    #[tokio::test]
+    async fn upgrades_acquisition_with_all_schedules_initially_absent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("catalog.db");
+        let old = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version <= 21)
+                .cloned()
+                .collect(),
+        );
+        let pool = connect_with_migrations(&path, &old).await.unwrap();
+        users::create(&pool, "legacy", &crate::auth::digest("legacy"))
+            .await
+            .unwrap();
+        let request = crate::discovery::FeedRequest::Personal {};
+        let feed = discovery::admit(&pool, 1, &request, 0).await.unwrap();
+        discovery::complete(
+            &pool,
+            &feed,
+            crate::discovery::GeneratedFeed {
+                title: "Existing".into(),
+                source_url: None,
+                items: vec![],
+                warnings: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        let target = downloads::target(
+            &pool,
+            1,
+            crate::downloads::SearchRequest::Query {
+                title: "Pending".into(),
+                artists: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        let job = downloads::enqueue(
+            &pool,
+            &crate::config::DownloadsConfig::default(),
+            1,
+            &target,
+            Some("abcdefghijk"),
+            None,
+        )
+        .await
+        .unwrap();
+        pool.close().await;
+        let pool = connect(&path).await.unwrap();
+        let config = crate::config::AutomationConfig::default();
+        let schedule = automation::get(
+            &pool,
+            &config,
+            1,
+            crate::automation::Target::Discovery(feed.feed_id),
+        )
+        .await
+        .unwrap();
+        assert!(!schedule.enabled);
+        assert_eq!(schedule.version, 0);
+        assert_eq!(
+            discovery::feed(&pool, 1, feed.feed_id)
+                .await
+                .unwrap()
+                .version,
+            1
+        );
+        assert_eq!(
+            downloads::job(&pool, 1, job.id).await.unwrap().status,
+            "queued"
+        );
+        assert!(automation::due(&pool).await.unwrap().is_empty());
+        pool.close().await;
+    }
 
     /// Acquisition upgrades preserve existing reactions and remember clears.
     #[tokio::test]
@@ -746,7 +825,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=21).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=22).collect::<Vec<_>>());
         pool.close().await;
     }
 

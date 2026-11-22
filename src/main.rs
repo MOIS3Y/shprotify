@@ -4,6 +4,7 @@ mod api;
 mod app;
 mod audio;
 mod auth;
+mod automation;
 mod cli;
 mod config;
 mod db;
