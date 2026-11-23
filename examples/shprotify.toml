@@ -77,7 +77,7 @@ user_agent = ""
 # Optional AcoustID application key; never use a user submission key here.
 # Prefer SHPROTIFY_METADATA__ACOUSTID_KEY to a shared configuration file.
 acoustid_key = ""
-# Optional Chromaprint executable; install fpcalc separately to identify audio.
+# Optional Chromaprint executable; Nix package/dev shell supplies fpcalc.
 # Example: "/run/current-system/sw/bin/fpcalc". Empty disables execution.
 fpcalc_path = ""
 

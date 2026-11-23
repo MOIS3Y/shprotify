@@ -21,6 +21,12 @@
         craneLib = crane.mkLib pkgs;
         cargoManifest = fromTOML (builtins.readFile ./Cargo.toml);
         cargoPackage = cargoManifest.package;
+        runtimeTools = with pkgs; [
+          yt-dlp
+          ffmpeg-headless
+          deno
+          chromaprint
+        ];
 
         commonArgs = {
           pname = cargoPackage.name;
@@ -30,6 +36,7 @@
             filter =
               path: type:
               craneLib.filterCargoSources path type
+              || path == toString ./LICENSE
               || path == toString ./examples/shprotify.toml
               || pkgs.lib.hasPrefix "${toString ./migrations}/" path;
           };
@@ -45,23 +52,28 @@
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         packageArgs = commonArgs // {
           inherit cargoArtifacts;
+          # TLS clients also initialize in offline provider tests.
+          SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
         };
         shprotify = craneLib.buildPackage (
           packageArgs
           // {
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postInstall = ''
+              install -Dm644 LICENSE \
+                "$out/share/licenses/shprotify/LICENSE"
               wrapProgram "$out/bin/shprotify" \
-                --prefix PATH : ${
-                  pkgs.lib.makeBinPath [
-                    pkgs.yt-dlp
-                    pkgs.ffmpeg-headless
-                    pkgs.deno
-                  ]
-                }
+                --prefix PATH : ${pkgs.lib.makeBinPath runtimeTools} \
+                --set-default SSL_CERT_FILE \
+                  ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
             '';
           }
         );
+
+        # Linux images reuse the wrapped package and its runtime closure.
+        dockerImage = import ./nix/docker.nix {
+          inherit pkgs shprotify cargoPackage;
+        };
 
         app =
           flake-utils.lib.mkApp {
@@ -89,7 +101,14 @@
           );
 
           rustfmt = craneLib.cargoFmt { src = commonArgs.src; };
-          tests = craneLib.cargoTest packageArgs;
+          tests = craneLib.cargoTest (packageArgs // { cargoTestExtraArgs = "--all-targets"; });
+
+          # Exercise installed files and startup without the source checkout.
+          runtime = pkgs.runCommand "shprotify-runtime" { } ''
+            ${pkgs.python3}/bin/python ${./nix/check-runtime.py} \
+              ${shprotify}/bin/shprotify
+            touch "$out"
+          '';
 
           nixfmt =
             pkgs.runCommand "shprotify-nixfmt"
@@ -97,7 +116,7 @@
                 nativeBuildInputs = [ pkgs.nixfmt ];
               }
               ''
-                nixfmt --check ${./flake.nix}
+                nixfmt --check ${./flake.nix} ${./nix/docker.nix}
                 touch "$out"
               '';
 
@@ -112,7 +131,7 @@
                 mkdir -p "$XDG_CACHE_HOME"
                 cd "$src"
                 tombi lint --offline --error-on-warnings
-                tombi format --check
+                tombi format --offline --check
                 touch "$out"
               '';
         };
@@ -121,6 +140,9 @@
         packages = {
           default = shprotify;
           "${cargoPackage.name}" = shprotify;
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          inherit dockerImage;
         };
 
         apps = {
@@ -135,14 +157,13 @@
         devShells.default = craneLib.devShell {
           inherit checks;
 
-          packages = with pkgs; [
-            nixfmt
-            yt-dlp
-            ffmpeg-headless
-            deno
-            rust-analyzer
-            tombi
-          ];
+          packages =
+            runtimeTools
+            ++ (with pkgs; [
+              nixfmt
+              rust-analyzer
+              tombi
+            ]);
 
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
         };
