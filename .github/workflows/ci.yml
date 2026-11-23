@@ -1,0 +1,228 @@
+name: CI and publishing
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  IMAGE: ghcr.io/mois3y/shprotify
+
+jobs:
+  verify:
+    name: Check server and documentation
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@v32.0.0
+        with:
+          enable_kvm: false
+          extra_nix_config: |
+            max-jobs = 2
+            cores = 2
+
+      - name: Run flake checks
+        run: nix flake check --no-update-lock-file --print-build-logs
+
+  publish:
+    name: Check and publish image to GHCR
+    if: |
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || (github.event_name == 'push' && github.ref_type == 'tag'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: ghcr-${{ github.ref_type }}
+      queue: max
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      latest: ${{ steps.publish.outputs.latest }}
+      pages-artifact: ${{ steps.pages.outcome == 'success' && steps.site.outputs.artifact || '' }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the server version
+        id: version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ||
+                  "$GITHUB_REF_NAME" != "v$version" ]]; then
+              echo "::error::Expected a stable release tag matching Cargo.toml (v$version)."
+              exit 1
+            fi
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: cachix/install-nix-action@v32.0.0
+        with:
+          enable_kvm: false
+          extra_nix_config: |
+            max-jobs = 2
+            cores = 2
+
+      - name: Run flake checks
+        run: nix flake check --no-update-lock-file --print-build-logs
+
+      - name: Locate the checked Pages build
+        if: github.ref == 'refs/heads/main'
+        id: site
+        run: |
+          site=$(nix build .#docs --no-update-lock-file --no-link --print-out-paths)
+          echo "path=$site" >> "$GITHUB_OUTPUT"
+          echo "artifact=github-pages-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the Pages site
+        if: steps.site.outcome == 'success'
+        id: pages
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          name: ${{ steps.site.outputs.artifact }}
+          path: ${{ steps.site.outputs.path }}
+          include-hidden-files: true
+          retention-days: 7
+
+      - name: Build and test the Docker image
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          archive=$(nix build .#dockerImage --no-update-lock-file --no-link --print-out-paths)
+          docker load --input "$archive"
+          container=$(docker run --detach --publish 127.0.0.1::3000 "$IMAGE:$VERSION")
+          cleanup() {
+            if [[ "$?" != 0 ]]; then
+              docker logs "$container" >&2 || true
+            fi
+            docker rm --force --volumes "$container" >/dev/null
+          }
+          trap cleanup EXIT
+          address=$(docker port "$container" 3000/tcp)
+          curl --fail --silent --show-error --max-time 2 \
+            --retry 15 --retry-connrefused --retry-delay 1 \
+            "http://$address/api/v1/health" | jq --exit-status '.status == "ok"'
+          docker exec "$container" shprotify --version
+
+      - uses: docker/login-action@v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push the image tags
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            docker tag "$IMAGE:$VERSION" "$IMAGE:sha-$GITHUB_SHA"
+            docker push "$IMAGE:sha-$GITHUB_SHA"
+            head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+            if [[ "$head" == "$GITHUB_SHA" ]]; then
+              docker tag "$IMAGE:$VERSION" "$IMAGE:main"
+              docker push "$IMAGE:main"
+            fi
+          else
+            docker push "$IMAGE:$VERSION"
+            newest=$(gh api --paginate "repos/$GITHUB_REPOSITORY/tags?per_page=100" --jq '.[].name' |
+              awk '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/' |
+              sort -V | tail -n 1)
+            if [[ "$GITHUB_REF_NAME" == "$newest" ]]; then
+              docker tag "$IMAGE:$VERSION" "$IMAGE:latest"
+              docker push "$IMAGE:latest"
+              echo 'latest=true' >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+  pages:
+    name: Deploy documentation
+    if: "!cancelled() && needs.publish.outputs.pages-artifact != ''"
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Check that this run still matches main
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [[ "$head" == "$GITHUB_SHA" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy to GitHub Pages
+        if: steps.head.outputs.current == 'true'
+        id: deploy
+        uses: actions/deploy-pages@v5.0.1
+        with:
+          artifact_name: ${{ needs.publish.outputs.pages-artifact }}
+
+  release:
+    name: Create GitHub release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+      LATEST: ${{ needs.publish.outputs.latest || 'false' }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@v4.9.1
+        with:
+          args: --current --use-branch-tags --no-exec --strip header --output release-notes.md
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            exit 0
+          fi
+          {
+            printf '## Container image\n\n'
+            printf '    docker pull %s:%s\n\n' "$IMAGE" "$VERSION"
+            cat release-notes.md
+          } > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "$GITHUB_REF_NAME" --latest="$LATEST" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

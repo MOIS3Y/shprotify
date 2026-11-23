@@ -1,0 +1,32 @@
+[changelog]
+header = "# Changelog\n\n"
+body = """
+{% if version -%}
+## {{ version }}
+{% else -%}
+## Unreleased
+{% endif %}
+{% for entry in commits | commit_groups(groups=commit_parsers_groups) %}
+### {{ entry.group }}
+{% for commit in entry.commits -%}
+- {% if commit.breaking %}**Breaking change** {% endif %}{% if commit.scope %}**{{ commit.scope }}** {% endif %}{{ commit.message | upper_first }}
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+protect_breaking_commits = true
+tag_pattern = '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+commit_parsers = [
+  { message = "^feat[(:!]", group = "Features" },
+  { message = "^(fix|revert)[(:!]", group = "Fixes" },
+  { message = "^perf[(:!]", group = "Performance" },
+  { message = "^docs[(:!]", group = "Documentation" },
+  { message = "^(build|ci)[(:!]", group = "Build and CI" },
+  { message = "^(chore|refactor|style|test)[(:!]", group = "Maintenance" },
+  { message = "^Merge ", skip = true },
+  { message = ".*", group = "Other changes" },
+]
