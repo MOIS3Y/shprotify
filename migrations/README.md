@@ -10,23 +10,10 @@ applied: SQLx validates migration history and checksums on startup.
 Each migration runs in a transaction by default. The build script watches
 this directory so adding SQL files triggers recompilation.
 
-The first migration creates the shared `artists` catalog. Artist names
-are deliberately not unique: distinct artists can share a display name.
+`1_initial_schema.sql` creates the complete initial schema, including
+constraints, indexes, triggers, full-text search and client read views.
+Sections follow the application's functional boundaries.
 
-The second adds `releases` and ordered `release_artists` credits. Titles
-are not unique. Credits reference existing artists; deleting a credited
-artist is restricted, while deleting a release removes its credits.
-
-The third adds independent `recordings` and ordered `recording_artists`.
-Recordings have no release or audio file dependency. Artist deletion is
-restricted while credited; deleting a recording removes its credits.
-
-The fourth adds `release_tracks`: recording occurrences with positive disc
-numbers and positions. Slots are unique per release/disc/position, while
-recordings can occur at multiple slots or in multiple releases. Release
-deletion cascades to tracks; referenced recordings cannot be deleted.
-
-The fifth adds `audio_files` metadata with a globally unique normalized
-absolute path and optional positive audio properties. Several files may
-represent one recording. Referenced recordings cannot be deleted; file
-registration does not access, create, move, or remove physical files.
+Add subsequent schema changes as new migrations. Keep schema constraints
+and data transformations in SQL and cover their behavior with database
+tests beside the relevant Rust module.

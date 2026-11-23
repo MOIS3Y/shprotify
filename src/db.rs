@@ -95,20 +95,13 @@ mod tests {
 
     use super::*;
 
-    /// Adding automation never enables existing feeds or changes pending work.
+    /// Reopening preserves feeds and queued work without enabling schedules.
     #[tokio::test]
-    async fn upgrades_acquisition_with_all_schedules_initially_absent() {
+    async fn reopening_preserves_work_without_enabling_schedules() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("catalog.db");
-        let old = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|m| m.version <= 21)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &old).await.unwrap();
-        users::create(&pool, "legacy", &crate::auth::digest("legacy"))
+        let pool = connect(&path).await.unwrap();
+        users::create(&pool, "listener", &crate::auth::digest("listener"))
             .await
             .unwrap();
         let request = crate::discovery::FeedRequest::Personal {};
@@ -173,78 +166,13 @@ mod tests {
         pool.close().await;
     }
 
-    /// Acquisition upgrades preserve existing reactions and remember clears.
+    /// Curated metadata, favorites and queue positions survive reopening.
     #[tokio::test]
-    async fn upgrades_discovery_without_losing_favorites_or_catalog_data() {
+    async fn reopening_preserves_curated_metadata_and_personal_state() {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("catalog.db");
-        let old = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|m| m.version <= 20)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &old).await.unwrap();
-        users::create(&pool, "legacy", &crate::auth::digest("legacy"))
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Original')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO recording_reactions \
-            (user_id,recording_id,reaction,changed_at) \
-            VALUES (1,1,'like','2000-01-01T00:00:00.000Z')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
         let pool = connect(&path).await.unwrap();
-        assert_eq!(
-            reactions::favorites(&pool, 1, 50, 0).await.unwrap().len(),
-            1
-        );
-        assert!(downloads::jobs(&pool, 1, 50, 0).await.unwrap().is_empty());
-        reactions::set(&pool, 1, 1, None).await.unwrap();
-        let remembered: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM recording_reaction_decisions \
-            WHERE user_id=1 AND recording_id=1",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(remembered, 1);
-        sqlx::query("DELETE FROM users WHERE id=1")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let decisions: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM recording_reaction_decisions",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(decisions, 0);
-        pool.close().await;
-    }
-
-    /// Discovery preserves metadata versions, favorites and playback queues.
-    #[tokio::test]
-    async fn upgrades_metadata_to_empty_personal_discovery_without_changes() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("catalog.db");
-        let old = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|m| m.version <= 19)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &old).await.unwrap();
-        users::create(&pool, "legacy", &crate::auth::digest("legacy"))
+        users::create(&pool, "listener", &crate::auth::digest("listener"))
             .await
             .unwrap();
         sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Original')")
@@ -299,20 +227,13 @@ mod tests {
         pool.close().await;
     }
 
-    /// Metadata migration preserves scanner identity and personal queue state.
+    /// Scanner identities and personal queue snapshots survive reopening.
     #[tokio::test]
-    async fn upgrades_catalog_to_metadata_without_rewriting_entities() {
+    async fn scanner_identity_and_queue_survive_reopening() {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("catalog.db");
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|m| m.version <= 18)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        users::create(&pool, "legacy", &crate::auth::digest("legacy"))
+        let pool = connect(&path).await.unwrap();
+        users::create(&pool, "listener", &crate::auth::digest("listener"))
             .await
             .unwrap();
         sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Curated')")
@@ -353,379 +274,17 @@ mod tests {
         pool.close().await;
     }
 
-    /// Existing published playlists survive queue creation without copies.
+    /// Accounts default to members; explicit roles and keys survive reopening.
     #[tokio::test]
-    async fn upgrades_playlists_to_independent_empty_queues() {
+    async fn accounts_default_to_members_and_roles_survive_reopening() {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("catalog.db");
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|m| m.version <= 17)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        users::create(&pool, "legacy", &crate::auth::digest("legacy-key"))
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Track')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let playlist = playlists::create(
-            &pool,
-            1,
-            crate::playlists::PlaylistDetails::new("Mix", "").unwrap(),
-        )
-        .await
-        .unwrap();
-        playlists::replace_tracks(&pool, 1, playlist.id, 1, &[1, 1])
-            .await
-            .unwrap();
-        playlists::publish(&pool, 1, playlist.id, 2, true)
-            .await
-            .unwrap();
-        pool.close().await;
         let pool = connect(&path).await.unwrap();
-        let queue = queue::get(&pool, 1).await.unwrap();
-        assert_eq!(queue.version, 0);
-        assert!(queue.items.is_empty());
-        let playlist = playlists::find(&pool, 1, playlist.id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(playlist.is_public);
-        assert_eq!(playlist.version, 3);
-        assert_eq!(
-            playlists::tracks(&pool, 1, playlist.id, 50, 0)
-                .await
-                .unwrap()
-                .items
-                .len(),
-            2
-        );
-        assert!(
-            users::authenticate(&pool, &crate::auth::digest("legacy-key"))
-                .await
-                .unwrap()
-                .is_some()
-        );
-        pool.close().await;
-    }
-
-    /// Upgrading adds no publication and preserves old versions and contents.
-    #[tokio::test]
-    async fn upgrades_existing_playlists_as_private_without_changing_versions()
-    {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("catalog.db");
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|migration| migration.version <= 16)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        users::create(&pool, "legacy", &crate::auth::digest("legacy-key"))
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO recordings (id,title) VALUES (1,'Track')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO playlists (id,user_id,name,version) \
-            VALUES (1,1,'Legacy',7)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO playlist_tracks (playlist_id,position,recording_id) \
-            VALUES (1,1,1),(1,2,1)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        let times: (String, String) = sqlx::query_as(
-            "SELECT created_at, updated_at FROM playlists WHERE id = 1",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
-        let pool = connect(&path).await.unwrap();
-        let playlist = playlists::find(&pool, 1, 1).await.unwrap().unwrap();
-        assert!(!playlist.is_public);
-        assert_eq!(playlist.version, 7);
-        assert_eq!((playlist.created_at, playlist.updated_at), times);
-        assert_eq!(
-            playlists::tracks(&pool, 1, 1, 50, 0)
-                .await
-                .unwrap()
-                .items
-                .len(),
-            2
-        );
-        assert!(playlists::published(&pool, 50, 0).await.unwrap().is_empty());
-        assert!(
-            playlists::publish(&pool, 1, 1, 7, true)
-                .await
-                .unwrap()
-                .is_public
-        );
-        pool.close().await;
-    }
-
-    /// Existing preferences/history survive the initially empty playlist
-    /// tables.
-    #[tokio::test]
-    async fn upgrades_history_to_playlists_without_creating_favorites() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("catalog.db");
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|migration| migration.version <= 15)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        users::create(&pool, "legacy", &crate::auth::digest("legacy-key"))
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO recordings (id, title) VALUES (1,'Track')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        // Seed the old schema directly; the current DAL includes decision
-        // tracking introduced by a later migration.
-        sqlx::query(
-            "INSERT INTO recording_reactions \
-            (user_id,recording_id,reaction,changed_at) \
-            VALUES (1,1,'like',strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        history::record(
-            &pool,
-            1,
-            crate::audio::history::NewPlayback::new(
-                "existing".into(),
-                1,
-                0,
-                100,
-                None,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-        pool.close().await;
-        let pool = connect(&path).await.unwrap();
-        assert!(playlists::list(&pool, 1, 50, 0).await.unwrap().is_empty());
-        assert_eq!(
-            reactions::favorites(&pool, 1, 50, 0).await.unwrap().len(),
-            1
-        );
-        assert_eq!(history::list(&pool, 1, 50, 0).await.unwrap().len(), 1);
-        assert!(
-            users::authenticate(&pool, &crate::auth::digest("legacy-key"))
-                .await
-                .unwrap()
-                .is_some()
-        );
-        pool.close().await;
-    }
-
-    /// Existing credentials/preferences survive adding an initially empty log.
-    #[tokio::test]
-    async fn upgrades_existing_accounts_to_playback_history() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("catalog.db");
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|migration| migration.version <= 14)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        users::create(&pool, "legacy", &crate::auth::digest("legacy-key"))
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO recordings (id, title) VALUES (1,'Track')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        // Seed the old schema directly; the current DAL includes decision
-        // tracking introduced by a later migration.
-        sqlx::query(
-            "INSERT INTO recording_reactions \
-            (user_id,recording_id,reaction,changed_at) \
-            VALUES (1,1,'like',strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
-        let pool = connect(&path).await.unwrap();
-        assert!(
-            users::authenticate(&pool, &crate::auth::digest("legacy-key"))
-                .await
-                .unwrap()
-                .is_some()
-        );
-        assert_eq!(
-            reactions::favorites(&pool, 1, 50, 0).await.unwrap().len(),
-            1
-        );
-        assert!(history::list(&pool, 1, 50, 0).await.unwrap().is_empty());
-        pool.close().await;
-    }
-
-    /// Existing entities become searchable when FTS is introduced.
-    #[tokio::test]
-    async fn upgrades_catalog_and_indexes_existing_entities() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("catalog.db");
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|migration| migration.version <= 10)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        sqlx::query("INSERT INTO artists (name) VALUES ('Legacy')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO recordings (title) VALUES ('Legacy')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO releases (title, kind) \
-            VALUES ('Legacy', 'other')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
-        let pool = connect(&path).await.unwrap();
-        let query = crate::library::search::phrase("leg").unwrap();
-        assert_eq!(
-            search::find(&pool, &query, None, 50, 0)
-                .await
-                .unwrap()
-                .len(),
-            3
-        );
-        sqlx::query("UPDATE recordings SET title = 'Changed'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("UPDATE releases SET title = 'Changed'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            search::find(&pool, &query, None, 50, 0)
-                .await
-                .unwrap()
-                .len(),
-            1
-        );
-        let changed = crate::library::search::phrase("changed").unwrap();
-        assert_eq!(
-            search::find(&pool, &changed, None, 50, 0)
-                .await
-                .unwrap()
-                .len(),
-            2
-        );
-        sqlx::query("DELETE FROM recordings")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM releases")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(
-            search::find(&pool, &changed, None, 50, 0)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        pool.close().await;
-    }
-
-    /// Adding personal data preserves legacy catalog identities and search.
-    #[tokio::test]
-    async fn upgrades_legacy_catalog_to_personal_reactions() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("catalog.db");
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|migration| migration.version <= 11)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        sqlx::query("INSERT INTO recordings (id, title) VALUES (1, 'Legacy')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool.close().await;
-        let pool = connect(&path).await.unwrap();
-        let user = users::create(&pool, "alice", &crate::auth::digest("key"))
-            .await
-            .unwrap();
-        assert!(
-            reactions::find(&pool, user.id, 1)
-                .await
-                .unwrap()
-                .unwrap()
-                .reaction
-                .is_none()
-        );
-        assert!(
-            reactions::favorites(&pool, user.id, 50, 0)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            recordings::find(&pool, 1).await.unwrap().unwrap().title,
-            "Legacy"
-        );
-        pool.close().await;
-    }
-
-    /// Existing keys/data survive role migration without implicit privileges.
-    #[tokio::test]
-    async fn upgrades_existing_accounts_as_members_and_preserves_keys() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("catalog.db");
-        let old = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|migration| migration.version <= 12)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &old).await.unwrap();
         sqlx::query("INSERT INTO users (id, name) VALUES (1, 'admin')")
             .execute(&pool)
             .await
             .unwrap();
-        let digest = crate::auth::digest("legacy-key");
+        let digest = crate::auth::digest("personal-key");
         sqlx::query("INSERT INTO user_keys (user_id, digest) VALUES (1, ?)")
             .bind(&digest)
             .execute(&pool)
@@ -806,9 +365,9 @@ mod tests {
         pool.close().await;
     }
 
-    /// Databases created before catalog migrations upgrade on startup.
+    /// An empty SQLite database receives exactly one initial migration.
     #[tokio::test]
-    async fn upgrades_existing_database_with_no_application_tables() {
+    async fn initializes_empty_database_with_one_migration() {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("library.db");
         let empty = Migrator::with_migrations(Vec::new());
@@ -828,381 +387,28 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(versions, (1..=23).collect::<Vec<_>>());
-        pool.close().await;
-    }
-
-    /// New matching tables preserve previously indexed paths and identities.
-    #[tokio::test]
-    async fn upgrades_scan_catalog_without_rewriting_legacy_associations() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("library.db");
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|migration| migration.version <= 6)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        sqlx::query("INSERT INTO recordings (id, title) VALUES (1, 'Legacy')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO audio_files (id, recording_id, path, format) \
-            VALUES (1, 1, '/music/legacy.flac', 'flac')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO audio_file_tags (file_id, tags) \
-            VALUES (1, '{\"artist\":\"Source credit\"}')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
-        let pool = connect(&path).await.unwrap();
-        let row: (i64, String) = sqlx::query_as(
-            "SELECT f.recording_id, r.title FROM audio_files f \
-             JOIN recordings r ON r.id = f.recording_id WHERE f.id = 1",
+        assert_eq!(versions, [1]);
+        for query in [
+            "SELECT count(*) FROM client_artists",
+            "SELECT count(*) FROM client_releases",
+            "SELECT count(*) FROM client_recordings",
+        ] {
+            let count: i64 =
+                sqlx::query_scalar(query).fetch_one(&pool).await.unwrap();
+            assert_eq!(count, 0, "initial view must be empty: {query}");
+        }
+        let violations: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pragma_foreign_key_check",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(row, (1, "Legacy".into()));
-        let matches: (i64, i64) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM scan_artist_matches), \
-             (SELECT COUNT(*) FROM scan_release_matches)",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(matches, (0, 0));
-        let job = scans::create(&pool, &[], false).await.unwrap();
-        indexing::store(
-            &pool,
-            job.id,
-            crate::library::metadata::ScannedFile {
-                state: None,
-                sha256: None,
-                path: "/music/legacy.flac".into(),
-                format: "flac".into(),
-                tags: crate::library::metadata::AudioTags {
-                    title: Some("Changed source".into()),
-                    artist: Some("Source credit".into()),
-                    album: Some("Album".into()),
-                    track_number: Some(1),
-                    ..Default::default()
-                },
-                properties: Default::default(),
-            },
-        )
-        .await
-        .unwrap();
-        assert!(
-            recordings::find(&pool, 1)
-                .await
-                .unwrap()
-                .unwrap()
-                .artist_ids
-                .is_empty()
-        );
-        assert!(
-            releases::fixtures::list(&pool, 50, 0)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        pool.close().await;
-    }
-
-    /// Legacy files probe once; old job snapshots gain safe policy defaults.
-    #[tokio::test]
-    async fn upgrades_catalog_to_incremental_scans_without_false_cache_hits() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("catalog.db");
-        let audio = directory.path().join("song.wav");
-        fs::write(&audio, crate::library::metadata::tests::wave()).unwrap();
-        let previous = Migrator::with_migrations(
-            MIGRATOR
-                .iter()
-                .filter(|migration| migration.version <= 7)
-                .cloned()
-                .collect(),
-        );
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        sqlx::query("INSERT INTO recordings (id, title) VALUES (1, 'Legacy')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO audio_files (recording_id, path, format) \
-            VALUES (1, ?, 'wav')",
-        )
-        .bind(audio.to_str().unwrap())
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO library_scans (status, roots, refreshed) \
-            VALUES ('completed', '[]', 1)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
-        let pool = connect(&path).await.unwrap();
-        let old = scans::find(&pool, 1).await.unwrap().unwrap();
-        assert!(!old.force);
-        assert_eq!(old.unchanged, 0);
-        assert_eq!(old.refreshed, 1);
-        let state =
-            crate::library::file_state::FileState::read(&audio).unwrap();
-        assert!(
-            !indexing::unchanged(&pool, audio.to_str().unwrap(), &state)
-                .await
-                .unwrap()
-        );
-        let job = scans::create(&pool, &[], false).await.unwrap();
-        indexing::store(
-            &pool,
-            job.id,
-            crate::library::metadata::read(&audio).unwrap().unwrap(),
-        )
-        .await
-        .unwrap();
-        assert!(
-            indexing::unchanged(&pool, audio.to_str().unwrap(), &state)
-                .await
-                .unwrap()
-        );
-        assert_eq!(
-            recordings::find(&pool, 1).await.unwrap().unwrap().title,
-            "Legacy"
-        );
-        let job = scans::find(&pool, job.id).await.unwrap().unwrap();
-        assert_eq!(job.imported, 0);
-        assert_eq!(job.refreshed, 1);
-        pool.close().await;
-    }
-
-    /// Upgrading the artist-only schema preserves its existing catalog data.
-    #[tokio::test]
-    async fn upgrades_artist_catalog_to_release_schema() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("library.db");
-        let first = migrator(
-            directory.path(),
-            include_str!("../migrations/1_create_artists.sql"),
-        )
-        .await;
-        let pool = connect_with_migrations(&path, &first).await.unwrap();
-        sqlx::query("INSERT INTO artists (name) VALUES ('Existing')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool.close().await;
-
-        let pool = connect(&path).await.unwrap();
-        let name: String = sqlx::query_scalar("SELECT name FROM artists")
+        assert_eq!(violations, 0);
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(name, "Existing");
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM releases")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 0);
-        pool.close().await;
-    }
-
-    /// The recording migration preserves existing releases and their credits.
-    #[tokio::test]
-    async fn upgrades_release_catalog_to_recording_schema() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("library.db");
-        fs::write(
-            directory.path().join("1_create_artists.sql"),
-            include_str!("../migrations/1_create_artists.sql"),
-        )
-        .unwrap();
-        fs::write(
-            directory.path().join("2_create_releases.sql"),
-            include_str!("../migrations/2_create_releases.sql"),
-        )
-        .unwrap();
-        let previous = Migrator::new(directory.path()).await.unwrap();
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        let artist = artists::create(
-            &pool,
-            &crate::library::ArtistName::parse("Existing").unwrap(),
-        )
-        .await
-        .unwrap();
-        let release = releases::create(
-            &pool,
-            crate::library::releases::NewRelease::new(
-                "Existing release",
-                crate::library::releases::ReleaseKind::Album,
-                vec![artist.id],
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-        pool.close().await;
-
-        let pool = connect(&path).await.unwrap();
-        let fetched =
-            releases::find(&pool, release.id).await.unwrap().unwrap();
-        assert_eq!(fetched.title, release.title);
-        assert_eq!(fetched.artist_ids, [artist.id]);
-        assert!(
-            recordings::fixtures::list(&pool, 50, 0)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        pool.close().await;
-    }
-
-    /// Adding track placements leaves the existing catalog identities intact.
-    #[tokio::test]
-    async fn upgrades_recording_catalog_to_track_schema() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("library.db");
-        for (name, sql) in [
-            (
-                "1_create_artists.sql",
-                include_str!("../migrations/1_create_artists.sql"),
-            ),
-            (
-                "2_create_releases.sql",
-                include_str!("../migrations/2_create_releases.sql"),
-            ),
-            (
-                "3_create_recordings.sql",
-                include_str!("../migrations/3_create_recordings.sql"),
-            ),
-        ] {
-            fs::write(directory.path().join(name), sql).unwrap();
-        }
-        let previous = Migrator::new(directory.path()).await.unwrap();
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        let recording = recordings::create(
-            &pool,
-            crate::library::recordings::NewRecording::new("Existing", vec![])
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-        let release = releases::create(
-            &pool,
-            crate::library::releases::NewRelease::new(
-                "Existing album",
-                crate::library::releases::ReleaseKind::Album,
-                vec![],
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-        pool.close().await;
-
-        let pool = connect(&path).await.unwrap();
-        assert_eq!(
-            recordings::find(&pool, recording.id)
-                .await
-                .unwrap()
-                .unwrap()
-                .title,
-            "Existing"
-        );
-        assert!(
-            release_tracks::fixtures::list(&pool, release.id, 50, 0)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        pool.close().await;
-    }
-
-    /// Adding file metadata preserves recordings and existing track positions.
-    #[tokio::test]
-    async fn upgrades_track_catalog_to_audio_file_schema() {
-        let directory = TempDir::new().unwrap();
-        let path = directory.path().join("library.db");
-        for (name, sql) in [
-            (
-                "1_create_artists.sql",
-                include_str!("../migrations/1_create_artists.sql"),
-            ),
-            (
-                "2_create_releases.sql",
-                include_str!("../migrations/2_create_releases.sql"),
-            ),
-            (
-                "3_create_recordings.sql",
-                include_str!("../migrations/3_create_recordings.sql"),
-            ),
-            (
-                "4_create_release_tracks.sql",
-                include_str!("../migrations/4_create_release_tracks.sql"),
-            ),
-        ] {
-            fs::write(directory.path().join(name), sql).unwrap();
-        }
-        let previous = Migrator::new(directory.path()).await.unwrap();
-        let pool = connect_with_migrations(&path, &previous).await.unwrap();
-        let recording = recordings::create(
-            &pool,
-            crate::library::recordings::NewRecording::new("Existing", vec![])
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-        let release = releases::create(
-            &pool,
-            crate::library::releases::NewRelease::new(
-                "Existing album",
-                crate::library::releases::ReleaseKind::Album,
-                vec![],
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-        let track = release_tracks::create(
-            &pool,
-            release.id,
-            crate::library::release_tracks::NewReleaseTrack::new(
-                recording.id,
-                2,
-                3,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-        pool.close().await;
-
-        let pool = connect(&path).await.unwrap();
-        let stored = release_tracks::find(&pool, release.id, track.id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(stored.recording_id, recording.id);
-        assert_eq!((stored.disc_number, stored.position), (2, 3));
-        assert!(
-            audio_files::list(&pool, recording.id, 50, 0)
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(integrity, "ok");
         pool.close().await;
     }
 

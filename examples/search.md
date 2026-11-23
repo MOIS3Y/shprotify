@@ -32,6 +32,6 @@ Pagination applies to the combined hits and may shift as the catalog changes.
 Only catalog names/titles are searched; credits, raw tags, paths, and audio
 contents are excluded. Catalog entities without physical files are searchable.
 
-A migration indexes existing rows. SQLite insert/update/delete triggers keep
-search entries in the same transaction as catalog changes, including scanner
+SQLite insert/update/delete triggers keep search entries in the same
+transaction as catalog changes, including scanner
 imports, manual corrections, and rollbacks. Search never reads collection files.
