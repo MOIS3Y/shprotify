@@ -35,10 +35,13 @@
             src = ./.;
             filter =
               path: type:
-              craneLib.filterCargoSources path type
-              || path == toString ./LICENSE
-              || path == toString ./examples/shprotify.toml
-              || pkgs.lib.hasPrefix "${toString ./migrations}/" path;
+              !(path == toString ./docs || pkgs.lib.hasPrefix "${toString ./docs}/" path)
+              && (
+                craneLib.filterCargoSources path type
+                || path == toString ./LICENSE
+                || path == toString ./examples/shprotify.toml
+                || pkgs.lib.hasPrefix "${toString ./migrations}/" path
+              );
           };
           strictDeps = true;
 
@@ -75,6 +78,8 @@
           inherit pkgs shprotify cargoPackage;
         };
 
+        documentation = pkgs.callPackage ./nix/docs.nix { inherit pkgs; };
+
         app =
           flake-utils.lib.mkApp {
             drv = shprotify;
@@ -86,6 +91,15 @@
 
         checks = {
           inherit shprotify;
+          documentation = documentation;
+
+          # The checked-in schema must match the installed server, offline.
+          openapi = pkgs.runCommand "shprotify-openapi" { } ''
+            ${pkgs.nodejs_24}/bin/node ${./docs/scripts/export-openapi.mjs} \
+              --binary ${shprotify}/bin/shprotify \
+              --output ${./docs/public/openapi.json} --check
+            touch "$out"
+          '';
 
           clippy = craneLib.cargoClippy (
             packageArgs
@@ -116,7 +130,7 @@
                 nativeBuildInputs = [ pkgs.nixfmt ];
               }
               ''
-                nixfmt --check ${./flake.nix} ${./nix/docker.nix}
+                nixfmt --check ${./flake.nix} ${./nix/docker.nix} ${./nix/docs.nix}
                 touch "$out"
               '';
 
@@ -140,6 +154,8 @@
         packages = {
           default = shprotify;
           "${cargoPackage.name}" = shprotify;
+          docs = documentation;
+          docsRoot = documentation.override { basePath = "/"; };
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit dockerImage;
@@ -163,9 +179,15 @@
               nixfmt
               rust-analyzer
               tombi
+              nodejs_24
+              python3
+              graphviz
             ]);
 
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          FONTCONFIG_FILE = pkgs.makeFontsConf {
+            fontDirectories = [ pkgs.dejavu_fonts ];
+          };
         };
       }
     );

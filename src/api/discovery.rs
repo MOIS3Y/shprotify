@@ -546,7 +546,7 @@ async fn list_jobs(
 
 /// Read one owned refresh status, including crash interruption.
 #[utoipa::path(get, path = "/me/discovery/jobs/{id}", tag = "Discovery",
-    operation_id = "get_job",
+    operation_id = "get_discovery_job",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])), responses(
         (status = 200, description = "Personal discovery result",

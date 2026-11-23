@@ -1,0 +1,18 @@
+services:
+  shprotify:
+    image: ${SHPROTIFY_IMAGE:-ghcr.io/mois3y/shprotify:latest}
+    restart: unless-stopped
+    stop_grace_period: 90s
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      SHPROTIFY_HTTP__BIND: "0.0.0.0:3000"
+      SHPROTIFY_DATABASE__PATH: "/data/shprotify.db"
+      SHPROTIFY_LIBRARY__DIRECTORIES: '["/music"]'
+      SHPROTIFY_LIBRARY__PUBLIC_CATALOG: "false"
+      SHPROTIFY_DOWNLOADS__DIRECTORY: "/data/downloads"
+      SHPROTIFY_LOGGING__FORMAT: "json"
+      SHPROTIFY_DOCS__ENABLED: "true"
+    volumes:
+      - ./data:/data
+      - ./music:/music:ro

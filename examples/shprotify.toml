@@ -51,7 +51,7 @@ public_catalog = true
 # Unchanged files are skipped; add ?force=true to reread all source metadata.
 # Existing paths keep their recording; measured properties/tags are refreshed.
 # New files match artist/release tags within their immediate parent directory.
-# See examples/scan.md for the import policy and persisted job reports.
+# See docs/guide/library.md for how to scan and update the library.
 directories = []
 # Example: directories = ["dev/music", "/mnt/music archive"]
 # Environment: SHPROTIFY_LIBRARY__DIRECTORIES='["/srv/music", "/mnt/archive"]'
@@ -102,7 +102,7 @@ refresh_interval_seconds = 60
 
 [downloads]
 # Experimental acquisition for any authenticated member/admin, off by default.
-# Provider failures affect only their jobs. See examples/downloads.md.
+# Provider failures affect only their jobs. See docs/guide/downloads.md.
 enabled = false
 # Exclusive server-owned storage, separate from library.directories.
 # Empty means no managed storage. Set to "dev/downloads" for local development.

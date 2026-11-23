@@ -1,0 +1,12 @@
+services:
+  shprotify:
+    image: ${SHPROTIFY_IMAGE:-ghcr.io/mois3y/shprotify:latest}
+    command: ["--config", "/config/shprotify.toml"]
+    restart: unless-stopped
+    stop_grace_period: 90s
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data:/data
+      - ./music:/music:ro
+      - ./config/shprotify.toml:/config/shprotify.toml:ro

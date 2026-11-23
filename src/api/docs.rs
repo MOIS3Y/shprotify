@@ -338,11 +338,17 @@ mod tests {
         let declared: HashSet<_> = sections.iter().copied().collect();
         assert_eq!(declared.len(), sections.len());
         let mut used = HashSet::new();
+        let mut operation_ids = HashSet::new();
         for methods in schema["paths"].as_object().unwrap().values() {
             for method in ["get", "put", "post", "delete", "patch", "head"] {
                 let Some(operation) = methods.get(method) else {
                     continue;
                 };
+                let identity = operation["operationId"].as_str().unwrap();
+                assert!(
+                    operation_ids.insert(identity),
+                    "Duplicate operationId {identity} breaks client generation"
+                );
                 let tags = operation["tags"].as_array().unwrap();
                 assert_eq!(
                     tags.len(),

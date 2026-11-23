@@ -1,0 +1,32 @@
+{
+  "name": "shprotify-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run reference:prepare && vitepress dev",
+    "build": "npm run check && vitepress build",
+    "preview": "vitepress preview",
+    "check": "npm run reference:prepare && vue-tsc --noEmit && node scripts/check-reference.mjs",
+    "reference:prepare": "python3 scripts/schema.py --check && node scripts/prepare-assets.mjs",
+    "schema:export": "python3 scripts/schema.py --write",
+    "api:export": "node scripts/export-openapi.mjs"
+  },
+  "overrides": {
+    "vitepress": {
+      "vite": "6.4.6"
+    }
+  },
+  "devDependencies": {
+    "@dbml/core": "12.1.0",
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "vitepress": "1.6.4",
+    "vue": "3.5.46",
+    "vue-tsc": "3.3.14"
+  }
+}

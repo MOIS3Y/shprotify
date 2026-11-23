@@ -15,6 +15,17 @@ rustc-ice-*.txt
 /result-*
 .direnv/
 
+# Documentation tooling and generated site assets
+/docs/node_modules/
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/
+/docs/.vitepress/generated/
+/docs/public/diagrams/
+/docs/public/database.dbml
+/docs/public/licenses/
+__pycache__/
+.ruff_cache/
+
 # Editors
 .idea/
 *.swp

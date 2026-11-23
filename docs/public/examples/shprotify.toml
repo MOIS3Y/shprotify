@@ -1,0 +1,18 @@
+[http]
+bind = "0.0.0.0:3000"
+
+[database]
+path = "/data/shprotify.db"
+
+[library]
+directories = ["/music"]
+public_catalog = false
+
+[downloads]
+directory = "/data/downloads"
+
+[logging]
+format = "json"
+
+[docs]
+enabled = true

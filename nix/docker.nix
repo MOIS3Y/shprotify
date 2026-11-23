@@ -41,7 +41,7 @@ pkgs.dockerTools.buildLayeredImage {
     ExposedPorts."3000/tcp" = { };
     Volumes."/data" = { };
     Env = [
-      "PATH=/bin"
+      "PATH=${shprotify}/bin:/bin"
       "HOME=/data"
       "XDG_CACHE_HOME=/data/cache"
       "TMPDIR=/tmp"

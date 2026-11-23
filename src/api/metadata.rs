@@ -335,7 +335,7 @@ async fn start_job(
 
 /// Inspect a persisted job and review its candidates.
 #[utoipa::path(get, path = "/metadata/jobs/{id}", tag = "Admin: Enrichment",
-    operation_id = "get_job",
+    operation_id = "get_metadata_job",
     params(("id" = i64, Path, minimum = 1)),
     security(("personal_key" = [])),
     responses((status = 200, description = "Operation result",
